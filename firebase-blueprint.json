@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Registered user profile information and settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "User identifier matching auth.uid" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User full name" },
+        "photoURL": { "type": "string", "description": "Avatar URL" },
+        "createdAt": { "type": "string", "description": "Account registration timestamp" }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "UserProduct": {
+      "title": "UserProduct",
+      "description": "Product workspace owned by a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique product ID" },
+        "userId": { "type": "string", "description": "Owner user ID" },
+        "name": { "type": "string", "description": "Product title" },
+        "vision": { "type": "string", "description": "Strategic product vision statement" },
+        "description": { "type": "string", "description": "High level description" },
+        "targetAudience": { "type": "string", "description": "Target personas or segment" },
+        "industry": { "type": "string", "description": "Industry domain" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "userId", "name", "vision", "createdAt"]
+    },
+    "UserArtifact": {
+      "title": "UserArtifact",
+      "description": "Generated product artifact such as PRDs, User Stories, or Architecture RFCs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Artifact identifier" },
+        "userId": { "type": "string", "description": "Owner user ID" },
+        "productId": { "type": "string", "description": "Associated product ID" },
+        "taskType": { "type": "string", "description": "PRD, USER_STORIES, TECH_RFC, COMPETITIVE_ANALYSIS" },
+        "version": { "type": "number", "description": "Version number" },
+        "status": { "type": "string", "description": "DRAFT, APPROVED, MODIFIED" },
+        "content": { "type": "string", "description": "JSON serialized payload or markdown representation" },
+        "createdAt": { "type": "string", "description": "Generation timestamp" }
+      },
+      "required": ["id", "userId", "productId", "taskType", "version", "status", "createdAt"]
+    },
+    "UserAiAsset": {
+      "title": "UserAiAsset",
+      "description": "Multimodal AI creations including generated mockups, videos, audio transcriptions, and soundtracks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Asset unique identifier" },
+        "userId": { "type": "string", "description": "Owner user ID" },
+        "productId": { "type": "string", "description": "Associated product ID" },
+        "assetType": { "type": "string", "description": "IMAGE, VIDEO, AUDIO_TRANSCRIPT, MUSIC_TRACK" },
+        "title": { "type": "string", "description": "Asset title or prompt summary" },
+        "prompt": { "type": "string", "description": "Prompt used for generation" },
+        "modelUsed": { "type": "string", "description": "Gemini/Veo/Lyria model used" },
+        "mediaUrl": { "type": "string", "description": "Data URL, storage URL, or text payload" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "userId", "productId", "assetType", "title", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile collection"
+    },
+    "/users/{userId}/products/{productId}": {
+      "schema": "UserProduct",
+      "description": "User product workspace documents"
+    },
+    "/users/{userId}/artifacts/{artifactId}": {
+      "schema": "UserArtifact",
+      "description": "User generated PRDs, stories and roadmap artifacts"
+    },
+    "/users/{userId}/aiAssets/{assetId}": {
+      "schema": "UserAiAsset",
+      "description": "User generated multimodal AI visual, video, audio and music assets"
+    }
+  }
+}

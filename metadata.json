@@ -1,0 +1,11 @@
+{
+  "name": "Remix ProductPilot AI Generation Engine",
+  "description": "Production-grade, schema-validated AI Generation Engine for PMs: PRDs, user stories, roadmaps, personas, KPIs, and experiment plans with strict validation, repair loop, RICE formula, and approval gate.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
