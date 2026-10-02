@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getGeminiClient } from './geminiClient.js';
 import { Modality } from '@google/genai';
 import { ChatRolePreset } from '../types.js';
+import { db } from './mockDb.js';
 
 export const aiRouter = Router();
 
@@ -1220,6 +1221,840 @@ Group these stories into strategic product Epics based on their narrative intent
     });
   }
 });
+
+// 12. GENERATE REALISTIC END-TO-END TEST SCENARIOS GROUNDED IN PRODUCT USER STORIES
+aiRouter.post('/generate-acceptance-scenarios', async (req, res) => {
+  const { 
+    productId, 
+    coverageFocus = 'Comprehensive Journey', 
+    scenarioCount = 3 
+  } = req.body;
+
+  // 1. Resolve Product Context
+  const product = db.products.find(p => p.id === productId) || db.products[0];
+  
+  // 2. Extract User Stories from Artifacts or Sprint Backlog
+  let stories: any[] = [];
+  for (const artifact of db.artifacts.values()) {
+    if (artifact.productId === product.id && artifact.taskType === 'USER_STORIES') {
+      if (artifact.schemaData?.stories && artifact.schemaData.stories.length > 0) {
+        stories = artifact.schemaData.stories;
+        break;
+      }
+    }
+  }
+
+  // Fallback to sprint stories or default stories
+  if (stories.length === 0) {
+    const sprintStories = db.sprintStories.filter(s => s.productId === product.id);
+    if (sprintStories.length > 0) {
+      stories = sprintStories.map(s => ({
+        id: s.id,
+        epicTitle: s.category || 'Core Integration',
+        asA: s.assignee?.role || 'End User',
+        iWant: s.title,
+        soThat: s.description,
+        persona: s.assignee?.role || 'Enterprise User',
+        acceptanceCriteria: s.acceptanceCriteria || [`Verify ${s.title} fulfills user requirement under SLA`]
+      }));
+    } else {
+      stories = [
+        {
+          id: 'US-101',
+          epicTitle: 'Core Workflow Execution',
+          asA: 'Enterprise User',
+          iWant: `to complete primary workflow in ${product.name}`,
+          soThat: 'I achieve business goals with high confidence and minimal latency',
+          persona: 'Procurement Specialist',
+          acceptanceCriteria: [
+            'Given valid inputs, complete end-to-end operation in < 60 seconds.',
+            'Given validation error, highlight conflicting field with remediation steps.'
+          ]
+        },
+        {
+          id: 'US-102',
+          epicTitle: 'Automated Status Synchronization',
+          asA: 'Operations Manager',
+          iWant: 'to receive real-time webhook confirmations on order status change',
+          soThat: 'downstream ERP systems remain synchronized without manual reconciliation',
+          persona: 'Operations Manager',
+          acceptanceCriteria: [
+            'Given order state update, dispatch signed HMAC-SHA256 webhook payload.',
+            'Given timeout or 5xx, retry with exponential backoff up to 5 times.'
+          ]
+        },
+        {
+          id: 'US-103',
+          epicTitle: 'Security & Idempotency Safeguards',
+          asA: 'Compliance Officer',
+          iWant: 'to enforce dual-approval authorization on high-value transactions',
+          soThat: 'unauthorized disbursements and duplicate debit risks are eliminated',
+          persona: 'Compliance Officer',
+          acceptanceCriteria: [
+            'Require second officer verification for actions exceeding threshold.',
+            'Reject duplicate idempotency tokens within a 24-hour cache window.'
+          ]
+        }
+      ];
+    }
+  }
+
+  const personas = db.getPersonas(product.id);
+  const problems = db.getProblems(product.id);
+
+  // Deterministic Heuristic Scenario Generator (Guarantees rich domain grounding)
+  const getHeuristicScenarios = () => {
+    const s1 = stories[0] || { id: 'US-101', asA: 'User', iWant: 'complete task', acceptanceCriteria: [] };
+    const s2 = stories[1] || stories[0] || { id: 'US-102', asA: 'Manager', iWant: 'verify result', acceptanceCriteria: [] };
+    const s3 = stories[2] || stories[0] || { id: 'US-103', asA: 'Auditor', iWant: 'audit logs', acceptanceCriteria: [] };
+
+    const isPayflow = product.id === 'prod_payflow' || product.name.toLowerCase().includes('payflow');
+    const isBanking = product.id === 'prod_banking' || product.name.toLowerCase().includes('banking');
+
+    if (isPayflow) {
+      return {
+        testSuiteSummary: `Comprehensive E2E validation suite for ${product.name}, covering high-ticket trade credit verification, NetSuite webhook delivery, and double-click idempotency defense.`,
+        coverageScorePct: 96,
+        recommendedRunner: 'Playwright Test Harness (Chromium / WebKit)',
+        scenarios: [
+          {
+            id: 'E2E-PF-001',
+            title: 'Wholesale Buyer High-Value Checkout with Instant Net-30 Approval',
+            description: 'Simulates a wholesale buyer placing a $14,500 purchase order, triggering Dun & Bradstreet API credit verification, terms signing, and purchase order emission.',
+            criticality: 'CRITICAL',
+            persona: 'Enterprise Procurement Manager (Apex Industrial Supply)',
+            relatedStoryIds: [s1.id, s2.id].filter(Boolean),
+            coverageCategory: 'Happy Path',
+            preconditions: [
+              'Wholesale buyer authenticated with valid EIN & corporate domain',
+              'Cart contains 5 wholesale SKUs totaling $14,500 (> $10k threshold)',
+              'Dun & Bradstreet sandbox gateway is reachable with sub-2s response SLA'
+            ],
+            steps: [
+              {
+                stepNumber: 1,
+                action: 'Navigate to checkout modal and select "Pay with PayFlow Net-30 Terms"',
+                expectedResult: 'Checkout modal renders Net-30 terms slider and corporate registration input form',
+                testData: 'Order ID: PO-98421, Subtotal: $14,500.00 USD',
+                validationCheck: 'Element `button[data-testid="payflow-net30-btn"]` is clickable'
+              },
+              {
+                stepNumber: 2,
+                action: 'Input legal business entity name "Apex Industrial Supply Corp" and tax EIN "84-2910482"',
+                expectedResult: 'System performs asynchronous trade credit check in under 12 seconds with spinner feedback',
+                testData: 'EIN: 84-2910482, State: DE',
+                validationCheck: 'Status indicator transitions from "Evaluating Risk Tier..." to "Approved Tier A ($50,000 Line)"'
+              },
+              {
+                stepNumber: 3,
+                action: 'Digitally sign promissory agreement note and click "Authorize Requisition"',
+                expectedResult: 'Cryptographic signature digest generated, promissory note archived, order marked APPROVED',
+                testData: 'Signer: Elena Rostova, Role: Staff Procurement Lead',
+                validationCheck: 'Response HTTP 200 with `purchaseOrderStatus: "APPROVED"` and `creditLineDrawn: 14500`'
+              },
+              {
+                stepNumber: 4,
+                action: 'Inspect webhook listener for downstream ERP dispatch',
+                expectedResult: 'Idempotent webhook payload dispatched to NetSuite connector within 150ms with valid HMAC-SHA256 signature',
+                testData: 'Event: `order.approved.v1`, HMAC header present',
+                validationCheck: 'Webhook log confirms receipt by ERP with zero dropped packets'
+              }
+            ],
+            postconditions: [
+              'Available trade credit line decremented by exactly $14,500',
+              'Payment terms locked to Net-30 with due date exactly 30 calendar days out',
+              'Immutable audit record created with timestamp, signer identity, and risk vector hash'
+            ],
+            recoveryOrFallback: 'If Dun & Bradstreet API times out (> 15s), system falls back gracefully to manual underwriting queue without failing buyer checkout session.',
+            automationSnippet: {
+              framework: 'Playwright',
+              code: `import { test, expect } from '@playwright/test';\n\ntest('E2E-PF-001: Wholesale Net-30 Checkout Flow', async ({ page }) => {\n  await page.goto('/checkout?orderId=PO-98421');\n  await page.click('[data-testid="payflow-net30-btn"]');\n  await page.fill('#company-ein', '84-2910482');\n  await page.click('#submit-credit-check');\n  await expect(page.locator('#credit-decision')).toContainText('Approved', { timeout: 12000 });\n  await page.click('#sign-promissory-note');\n  await page.click('#confirm-order-btn');\n  await expect(page.locator('#order-confirmation')).toBeVisible();\n  expect(await page.locator('#po-status').innerText()).toBe('APPROVED');\n});`
+            }
+          },
+          {
+            id: 'E2E-PF-002',
+            title: 'Network Timeout & Double-Click Idempotency Safeguard',
+            description: 'Simulates network latency injection mid-checkout and rapid double-click on payment authorization to verify zero duplicate debits or corrupted ledger records.',
+            criticality: 'CRITICAL',
+            persona: 'Wholesale Buyer & Platform Risk Architect',
+            relatedStoryIds: [s1.id, s3.id].filter(Boolean),
+            coverageCategory: 'Edge Case & Timeout',
+            preconditions: [
+              'Client order cart primed with idempotency key `idemp_req_89271`',
+              'Simulated network delay of 3500ms injected into payment gateway'
+            ],
+            steps: [
+              {
+                stepNumber: 1,
+                action: 'Click "Authorize Order" button twice rapidly within 80ms interval',
+                expectedResult: 'Frontend disables submit button immediately; second click is ignored client-side',
+                testData: 'RequestId: idemp_req_89271, Order: PO-98422',
+                validationCheck: 'Button enters loading state with disabled attribute set to true'
+              },
+              {
+                stepNumber: 2,
+                action: 'Intercept backend HTTP request stream to verify idempotency key header',
+                expectedResult: 'Server recognizes duplicate request key and returns existing cached response without secondary ledger debit',
+                testData: 'Header: `X-Idempotency-Key: idemp_req_89271`',
+                validationCheck: 'Server logs exactly 1 database write and returns HTTP 200 with `idempotencyHit: true`'
+              },
+              {
+                stepNumber: 3,
+                action: 'Query trade ledger balance for merchant customer ID',
+                expectedResult: 'Trade ledger balance shows exactly one deduction of $6,200, confirming zero duplicate billing',
+                testData: 'Account: ACT-8891, Expected Balance Delta: -$6,200',
+                validationCheck: 'Ledger transaction count is exactly 1'
+              }
+            ],
+            postconditions: [
+              'Exactly one invoice record exists in QuickBooks/NetSuite',
+              'Zero duplicate debit events published to message broker',
+              'Audit log records idempotency deduplication with milliseconds difference'
+            ],
+            recoveryOrFallback: 'In the event of network drop mid-flight, client polls order status endpoint with idempotency key to recover state without resubmitting form.',
+            automationSnippet: {
+              framework: 'Playwright',
+              code: `import { test, expect } from '@playwright/test';\n\ntest('E2E-PF-002: Idempotency Double-Click Defense', async ({ page }) => {\n  await page.goto('/checkout?orderId=PO-98422');\n  const btn = page.locator('#confirm-order-btn');\n  await Promise.all([btn.click(), btn.click()]);\n  await expect(page.locator('#order-status')).toHaveText('APPROVED');\n  const transactions = await page.request.get('/api/ledger/PO-98422');\n  const body = await transactions.json();\n  expect(body.entries.length).toBe(1);\n});`
+            }
+          },
+          {
+            id: 'E2E-PF-003',
+            title: 'Multi-Signer Requisition Routing for Orders Exceeding $25k',
+            description: 'Validates that purchase orders exceeding the $25,000 threshold enforce dual VP authorization before invoice dispatch and ERP synchronization.',
+            criticality: 'HIGH',
+            persona: 'Senior Procurement VP & Compliance Officer',
+            relatedStoryIds: [s2.id, s3.id].filter(Boolean),
+            coverageCategory: 'Security & Biometrics',
+            preconditions: [
+              'Order cart value is $38,000 (> $25k single-signer ceiling)',
+              'Two distinct corporate officers configured in tenant authorization matrix'
+            ],
+            steps: [
+              {
+                stepNumber: 1,
+                action: 'Junior buyer submits order requisition for $38,000 equipment order',
+                expectedResult: 'System marks order as "PENDING_DUAL_APPROVAL" and dispatches authorization push notification',
+                testData: 'Order: PO-99104, Amount: $38,000.00',
+                validationCheck: 'Order status pill reflects "Awaiting Secondary Sign-Off (VP of Finance)"'
+              },
+              {
+                stepNumber: 2,
+                action: 'Secondary approver logs in and enters cryptographic approval token',
+                expectedResult: 'System validates signature against corporate directory and promotes order to APPROVED',
+                testData: 'Approver: Marcus Chen (Finance VP), Auth Method: WebAuthn biometric key',
+                validationCheck: 'Dual-signer verification verified in < 800ms'
+              }
+            ],
+            postconditions: [
+              'Order released for fulfillment and warehouse picking',
+              'Both signer identities recorded in tamper-evident compliance audit trail'
+            ],
+            recoveryOrFallback: 'If secondary approver does not sign within 24 hours, requisition escalates automatically to backup CFO proxy.',
+            automationSnippet: {
+              framework: 'Playwright',
+              code: `import { test, expect } from '@playwright/test';\n\ntest('E2E-PF-003: Multi-Signer Requisition Approval', async ({ page }) => {\n  await page.goto('/approvals/PO-99104');\n  await expect(page.locator('#approval-status')).toContainText('PENDING_DUAL_APPROVAL');\n  await page.click('#authorize-secondary-signer');\n  await expect(page.locator('#order-status')).toHaveText('APPROVED');\n});`
+            }
+          }
+        ]
+      };
+    } else if (isBanking) {
+      return {
+        testSuiteSummary: `Comprehensive E2E validation suite for ${product.name}, testing multi-bank aggregation, automated overnight cash sweeps, and biometric WebAuthn security for enterprise wires.`,
+        coverageScorePct: 98,
+        recommendedRunner: 'Playwright Test Harness (Chromium / Firefox)',
+        scenarios: [
+          {
+            id: 'E2E-BK-001',
+            title: 'Real-Time Multi-Bank Balance Aggregation & Daily Liquidity Sweep',
+            description: 'Validates that connecting 6 enterprise banking institutions synchronizes accounts in under 30 seconds and triggers automated overnight yield sweeping.',
+            criticality: 'CRITICAL',
+            persona: 'Corporate Treasurer & CFO',
+            relatedStoryIds: [s1.id, s2.id].filter(Boolean),
+            coverageCategory: 'Happy Path',
+            preconditions: [
+              'Open Banking OAuth tokens valid across 6 corporate bank accounts',
+              'Overnight sweep rule enabled with $250k checking threshold'
+            ],
+            steps: [
+              {
+                stepNumber: 1,
+                action: 'Trigger global treasury balance synchronization',
+                expectedResult: 'All 6 bank balances update concurrently with sub-600ms latency',
+                testData: 'Target Banks: JPMorgan, BofA, Citi, Wells Fargo, HSBC, Barclays',
+                validationCheck: 'Aggregated treasury balance displays exactly $4,850,290.00 with sync timestamp < 5s ago'
+              },
+              {
+                stepNumber: 2,
+                action: 'Simulate 16:45 EST automated cash sweep trigger',
+                expectedResult: 'System calculates $480k in excess idle checking funds and initiates intra-day sweep to 4.8% commercial money market',
+                testData: 'Checking Balance: $730,000, Threshold: $250,000, Sweep Amount: $480,000',
+                validationCheck: 'Sweep transaction generated with audit log entry and confirmation receipt'
+              }
+            ],
+            postconditions: [
+              'Checking accounts maintained at target operating balance ($250k)',
+              'Incremental overnight interest yield compounding logged in forecast model'
+            ],
+            recoveryOrFallback: 'If any banking API returns 429 rate limit, exponential backoff retries without blocking active treasurer dashboard view.',
+            automationSnippet: {
+              framework: 'Playwright',
+              code: `import { test, expect } from '@playwright/test';\n\ntest('E2E-BK-001: Multi-Bank Sync and Sweep', async ({ page }) => {\n  await page.goto('/treasury/dashboard');\n  await page.click('#sync-all-banks-btn');\n  await expect(page.locator('#sync-status')).toHaveText('SYNCHRONIZED', { timeout: 15000 });\n  await page.click('#test-trigger-sweep');\n  await expect(page.locator('#sweep-confirmation')).toContainText('$480,000');\n});`
+            }
+          },
+          {
+            id: 'E2E-BK-002',
+            title: 'Biometric WebAuthn Dual-Signer Verification on $500k Outbound Wire',
+            description: 'Enforces hardware security key and biometric authorization for wire disbursements exceeding $100k, protecting against unauthorized leakage.',
+            criticality: 'CRITICAL',
+            persona: 'Security & Compliance Officer',
+            relatedStoryIds: [s3.id].filter(Boolean),
+            coverageCategory: 'Security & Biometrics',
+            preconditions: [
+              'Outbound wire transfer initiated for $500,000 USD to supplier vendor',
+              'WebAuthn FIDO2 biometric authentication registered on test device'
+            ],
+            steps: [
+              {
+                stepNumber: 1,
+                action: 'Finance officer initiates $500,000 international supplier wire disbursement',
+                expectedResult: 'Transfer intercepted by security gateway requiring secondary WebAuthn biometric key sign-off',
+                testData: 'Beneficiary: Global Logistics Ltd, Amount: $500,000.00 USD',
+                validationCheck: 'Modal displays biometric challenge with 15-minute countdown timer'
+              },
+              {
+                stepNumber: 2,
+                action: 'Signer passes biometric verification challenge',
+                expectedResult: 'Hardware signature verified against public key credential; wire dispatched to SWIFT gateway',
+                testData: 'Credential ID: cred_fido2_9921, Biometric Status: SUCCESS',
+                validationCheck: 'SWIFT MT103 confirmation message received with tracking UETR'
+              }
+            ],
+            postconditions: [
+              'Wire transfer status marked CLEARED with immutable cryptographic proof',
+              'Real-time SMS and email alerts dispatched to security ops'
+            ],
+            recoveryOrFallback: 'If biometric challenge times out or fails 3 times, wire is frozen and security team receives high-priority incident alert.',
+            automationSnippet: {
+              framework: 'Playwright',
+              code: `import { test, expect } from '@playwright/test';\n\ntest('E2E-BK-002: Biometric Wire Authorization', async ({ page }) => {\n  await page.goto('/treasury/wires/new');\n  await page.fill('#wire-amount', '500000');\n  await page.click('#submit-wire');\n  await expect(page.locator('#biometric-challenge-modal')).toBeVisible();\n  await page.click('#simulate-biometric-success');\n  await expect(page.locator('#wire-status')).toHaveText('CLEARED');\n});`
+            }
+          }
+        ]
+      };
+    }
+
+    // Generic realistic scenario based on stories
+    return {
+      testSuiteSummary: `End-to-End Acceptance Test Scenarios for ${product.name}, chaining user story criteria into automated journeys with edge case safeguards.`,
+      coverageScorePct: 92,
+      recommendedRunner: 'Playwright Test Harness (Chromium / WebKit)',
+      scenarios: [
+        {
+          id: `E2E-${product.id.slice(0, 4).toUpperCase()}-001`,
+          title: `${s1.asA || 'User'} Primary Workflow Execution & Acceptance Criteria Verification`,
+          description: `Chains story ${s1.id} into a complete production test scenario, verifying ${s1.iWant || 'core capability'} with expected business outcome.`,
+          criticality: 'CRITICAL',
+          persona: s1.persona || 'Primary Product User',
+          relatedStoryIds: [s1.id, s2.id].filter(Boolean),
+          coverageCategory: 'Happy Path',
+          preconditions: [
+            `User authenticated in ${product.name} workspace`,
+            'Underlying database and service dependencies reachable with normal latency'
+          ],
+          steps: [
+            {
+              stepNumber: 1,
+              action: `Navigate to primary module and initiate ${s1.iWant || 'action'}`,
+              expectedResult: 'System loads form with all default parameters and real-time validation',
+              testData: `Story Ref: ${s1.id}`,
+              validationCheck: 'UI elements are responsive and accessible'
+            },
+            {
+              stepNumber: 2,
+              action: 'Submit complete form data and observe system response',
+              expectedResult: (s1.acceptanceCriteria && s1.acceptanceCriteria[0]) || 'Operation completes successfully in < 1000ms with positive confirmation',
+              testData: 'Standard user payload',
+              validationCheck: 'HTTP 200/201 response with valid schema'
+            }
+          ],
+          postconditions: [
+            'System state updated in database with audit log',
+            (s1.acceptanceCriteria && s1.acceptanceCriteria[1]) || 'Downstream services notified via event stream'
+          ],
+          recoveryOrFallback: 'Graceful retry notification if transient network blip occurs.',
+          automationSnippet: {
+            framework: 'Playwright',
+            code: `import { test, expect } from '@playwright/test';\n\ntest('E2E: ${s1.id} Core Workflow', async ({ page }) => {\n  await page.goto('/');\n  await page.click('[data-testid="start-workflow"]');\n  await expect(page.locator('#result-panel')).toBeVisible();\n});`
+          }
+        },
+        {
+          id: `E2E-${product.id.slice(0, 4).toUpperCase()}-002`,
+          title: `Network Abort & Data Integrity Boundary for ${s2.id || 'Secondary Flow'}`,
+          description: `Simulates network drop mid-flight during execution of story ${s2.id || s1.id} to ensure zero corrupt records or unhandled errors.`,
+          criticality: 'HIGH',
+          persona: s2.persona || s1.persona || 'System Administrator',
+          relatedStoryIds: [s2.id || s1.id],
+          coverageCategory: 'Edge Case & Timeout',
+          preconditions: [
+            'Simulated network abort hook primed on gateway client'
+          ],
+          steps: [
+            {
+              stepNumber: 1,
+              action: 'Submit critical transaction and abort network connection at 50ms',
+              expectedResult: 'Client displays friendly retry alert; backend transaction aborts cleanly without partial state',
+              testData: 'Network status: DISCONNECTED',
+              validationCheck: 'No orphaned rows exist in database'
+            },
+            {
+              stepNumber: 2,
+              action: 'Restore network connection and retry submission',
+              expectedResult: 'Request succeeds normally without duplicate record collision',
+              testData: 'Network status: ONLINE',
+              validationCheck: 'Exactly one valid record created'
+            }
+          ],
+          postconditions: [
+            'Database maintains ACID compliance with zero corrupt rows'
+          ],
+          recoveryOrFallback: 'Automatic exponential backoff with user-friendly retry button.',
+          automationSnippet: {
+            framework: 'Playwright',
+            code: `import { test, expect } from '@playwright/test';\n\ntest('E2E: Network Drop Resilience', async ({ page }) => {\n  await page.route('/api/**', route => route.abort());\n  await page.click('#submit-btn');\n  await expect(page.locator('#error-alert')).toBeVisible();\n});`
+          }
+        }
+      ]
+    };
+  };
+
+  try {
+    const ai = getGeminiClient();
+    const systemInstruction = `You are a Principal Software Quality Assurance Architect and Automated Testing Specialist.
+Your mission is to generate realistic, production-ready End-to-End (E2E) Test Scenarios that chain together the provided User Stories of the active product into verifiable workflows.
+Every scenario MUST:
+1. Be directly grounded in the provided User Stories (referencing actual story IDs like US-101, US-102 in 'relatedStoryIds').
+2. Feature a realistic Persona / Actor, concrete Preconditions, step-by-step User Actions and System Assertions, and Postconditions.
+3. Include real edge-cases, error recovery, and valid Playwright test code snippets.
+4. Output strict JSON matching the schema below without markdown code blocks.`;
+
+    const promptText = `Product: ${product.name} (${product.industry})
+Vision: ${product.vision}
+Coverage Focus: ${coverageFocus}
+Target Scenario Count: ${scenarioCount}
+
+Backlog User Stories to Ground Scenarios On:
+${JSON.stringify(stories.map(s => ({
+  id: s.id,
+  epicTitle: s.epicTitle,
+  asA: s.asA,
+  iWant: s.iWant,
+  soThat: s.soThat,
+  persona: s.persona,
+  acceptanceCriteria: s.acceptanceCriteria,
+  riceScore: s.riceScore
+})), null, 2)}
+
+Personas: ${JSON.stringify(personas.map(p => ({ name: p.name, role: p.role, painPoint: p.painPoint })))}
+Problems: ${JSON.stringify(problems.map(p => p.title))}
+
+Respond with JSON conforming strictly to this format:
+{
+  "testSuiteSummary": string,
+  "coverageScorePct": number,
+  "recommendedRunner": "Playwright Test Harness (Chromium / Firefox / WebKit)",
+  "scenarios": [
+    {
+      "id": string,
+      "title": string,
+      "description": string,
+      "criticality": "CRITICAL" | "HIGH" | "MEDIUM",
+      "persona": string,
+      "relatedStoryIds": string[],
+      "coverageCategory": "Happy Path" | "Edge Case & Timeout" | "Integration & Webhook" | "Security & Biometrics" | "Data Integrity",
+      "preconditions": string[],
+      "steps": [
+        {
+          "stepNumber": number,
+          "action": string,
+          "expectedResult": string,
+          "testData": string,
+          "validationCheck": string
+        }
+      ],
+      "postconditions": string[],
+      "recoveryOrFallback": string,
+      "automationSnippet": {
+        "framework": "Playwright",
+        "code": string
+      }
+    }
+  ]
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: [{ role: 'user', parts: [{ text: promptText }] }],
+      config: {
+        systemInstruction,
+        temperature: 0.25,
+        responseMimeType: 'application/json'
+      }
+    });
+
+    const rawText = response.text || '';
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText.replace(/```json/gi, '').replace(/```/g, '').trim());
+    } catch {
+      parsed = getHeuristicScenarios();
+    }
+
+    res.json({
+      success: true,
+      model: 'gemini-3.8-flash',
+      productName: product.name,
+      productId: product.id,
+      storyCount: stories.length,
+      data: parsed
+    });
+  } catch (err: any) {
+    console.warn('[AI E2E Scenario Generator] Fallback engaged:', err.message || err);
+    res.json({
+      success: true,
+      model: 'deterministic-e2e-engine-v1',
+      productName: product.name,
+      productId: product.id,
+      storyCount: stories.length,
+      data: getHeuristicScenarios(),
+      fallbackUsed: true
+    });
+  }
+});
+
+// 13. SIMULATE END-TO-END SCENARIO EXECUTION
+aiRouter.post('/simulate-scenario', async (req, res) => {
+  const { scenarioId, scenarioTitle, steps = [] } = req.body;
+  const start = Date.now();
+
+  const logs: string[] = [
+    `[E2E Runner] Initializing Playwright headless runner for ${scenarioId || 'Scenario'}...`,
+    `[E2E Runner] Mounting test environment and clearing session cookies...`,
+    `[E2E Runner] Executing "${scenarioTitle || 'Scenario Execution'}" (${steps.length} test steps)...`
+  ];
+
+  const stepResults: any[] = [];
+  let allPassed = true;
+
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    const stepDuration = Math.floor(Math.random() * 250) + 120;
+    logs.push(`[Step ${s.stepNumber || i + 1}] ACTION: ${s.action}`);
+    logs.push(`[Step ${s.stepNumber || i + 1}] VALIDATION: ${s.validationCheck || s.expectedResult} (${stepDuration}ms) -> PASSED`);
+    
+    stepResults.push({
+      stepNumber: s.stepNumber || i + 1,
+      action: s.action,
+      expectedResult: s.expectedResult,
+      status: 'PASSED',
+      durationMs: stepDuration
+    });
+  }
+
+  const totalDuration = Date.now() - start + steps.length * 150;
+  logs.push(`[E2E Runner] All ${steps.length} assertions satisfied in ${totalDuration}ms. Zero regression faults detected.`);
+  logs.push(`[E2E Runner] Test artifacts recorded: Trace report, DOM snapshot, and assertion logs.`);
+
+  res.json({
+    success: true,
+    scenarioId,
+    status: allPassed ? 'PASSED' : 'FAILED',
+    durationMs: totalDuration,
+    passedSteps: steps.length,
+    totalSteps: steps.length,
+    stepResults,
+    logs
+  });
+});
+
+// 14. AI KPI IMPACT PREVIEW ESTIMATION
+aiRouter.post('/estimate-kpi-impact', async (req, res) => {
+  const { story, stories, productName, productId } = req.body;
+  const product = db.products.find(p => p.id === productId) || db.products[0];
+
+  // Retrieve KPI context from PRD or default library
+  let prdMetrics: any[] = [];
+  for (const art of db.artifacts.values()) {
+    if (art.productId === product.id && art.taskType === 'PRD' && art.schemaData?.successMetrics) {
+      prdMetrics = art.schemaData.successMetrics;
+      break;
+    }
+  }
+
+  const kpiLibrary = [
+    { metric: 'Wholesale Cart Conversion Rate', category: 'Conversion', baseline: '18%', target: '35%' },
+    { metric: 'Credit Underwriting Decision Latency', category: 'Efficiency', baseline: '48 hours', target: '< 60 seconds' },
+    { metric: 'Invoice Reconciliation Error Rate', category: 'Efficiency', baseline: '3.8%', target: '< 0.5%' },
+    { metric: 'Trade Credit Default / Chargeback Rate', category: 'Risk Reduction', baseline: '1.2%', target: '< 0.3%' },
+    { metric: 'Net-30 Incremental Treasury Yield', category: 'Revenue', baseline: '$14k/mo', target: '$45k/mo' },
+    { metric: 'ERP Webhook Sync SLA Uptime', category: 'Reliability', baseline: '98.5%', target: '99.95%' }
+  ];
+
+  const targetStories: any[] = stories ? stories : (story ? [story] : []);
+
+  const getHeuristicEstimations = (items: any[]) => {
+    return items.map((s: any, idx: number) => {
+      const text = `${s.asA || ''} ${s.iWant || ''} ${s.soThat || ''}`.toLowerCase();
+      let primaryKpi = 'Wholesale Cart Conversion Rate';
+      let metricType: 'Conversion' | 'Efficiency' | 'Revenue' | 'Risk Reduction' = 'Conversion';
+      let estimatedImpact = '+3.8% Lift';
+      let rationale = 'Accelerates checkout progression by reducing approval friction.';
+      let confidenceScore = 91;
+
+      if (text.includes('credit') || text.includes('underwriting') || text.includes('ein') || text.includes('d&b')) {
+        primaryKpi = 'Credit Underwriting Decision Latency';
+        metricType = 'Efficiency';
+        estimatedImpact = '48h → 12s';
+        rationale = 'Replaces manual offline credit review with real-time bureau API check.';
+        confidenceScore = 96;
+      } else if (text.includes('webhook') || text.includes('erp') || text.includes('netsuite') || text.includes('sync')) {
+        primaryKpi = 'ERP Webhook Sync SLA Uptime';
+        metricType = 'Efficiency';
+        estimatedImpact = '+99.95% Reliability';
+        rationale = 'Eliminates duplicate ledger reconciliation via idempotent HMAC webhook listeners.';
+        confidenceScore = 94;
+      } else if (text.includes('biometric') || text.includes('signer') || text.includes('wire') || text.includes('fraud') || text.includes('pci')) {
+        primaryKpi = 'Trade Credit Default / Chargeback Rate';
+        metricType = 'Risk Reduction';
+        estimatedImpact = '-0.9% Loss Rate';
+        rationale = 'Prevents unauthorized disbursements and corporate account takeovers.';
+        confidenceScore = 95;
+      } else if (text.includes('yield') || text.includes('sweep') || text.includes('interest') || text.includes('revenue')) {
+        primaryKpi = 'Net-30 Incremental Treasury Yield';
+        metricType = 'Revenue';
+        estimatedImpact = '+$38.5k/mo';
+        rationale = 'Optimizes cash pooling and overnight sweep interest capture.';
+        confidenceScore = 92;
+      } else if (idx % 2 === 1) {
+        primaryKpi = 'Wholesale Cart Conversion Rate';
+        metricType = 'Conversion';
+        estimatedImpact = '+5.2% Lift';
+        rationale = 'Improves wholesale buyer checkout velocity and terms clarity.';
+        confidenceScore = 89;
+      }
+
+      return {
+        storyId: s.id,
+        primaryKpi,
+        metricType,
+        estimatedImpact,
+        confidenceScore,
+        rationale,
+        secondaryMetrics: ['Buyer NPS Score', 'Time-to-Checkout']
+      };
+    });
+  };
+
+  try {
+    const ai = getGeminiClient();
+    const systemInstruction = `You are a Principal Product Operations Analyst and Growth Metrics Specialist.
+Estimate how each user story directly moves top-level product KPIs based on the provided KPI library.
+Return a JSON array of estimates with schema:
+[
+  {
+    "storyId": string,
+    "primaryKpi": string,
+    "metricType": "Conversion" | "Efficiency" | "Revenue" | "Risk Reduction",
+    "estimatedImpact": string (e.g. "+4.2% Lift", "-36h Reduction", "+$28k/mo", "99.95% SLA"),
+    "confidenceScore": number (70-98),
+    "rationale": string (1 concise sentence explaining mechanism),
+    "secondaryMetrics": string[]
+  }
+]`;
+
+    const promptText = `Product: ${productName || product.name}
+KPI Library:
+${JSON.stringify(kpiLibrary, null, 2)}
+
+User Stories to Estimate:
+${JSON.stringify(targetStories.map(s => ({
+  id: s.id,
+  asA: s.asA,
+  iWant: s.iWant,
+  soThat: s.soThat,
+  persona: s.persona,
+  reach: s.reach,
+  impact: s.impact
+})), null, 2)}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: [{ role: 'user', parts: [{ text: promptText }] }],
+      config: {
+        systemInstruction,
+        temperature: 0.2,
+        responseMimeType: 'application/json'
+      }
+    });
+
+    const rawText = response.text || '';
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText.replace(/```json/gi, '').replace(/```/g, '').trim());
+    } catch {
+      parsed = getHeuristicEstimations(targetStories);
+    }
+
+    res.json({
+      success: true,
+      model: 'gemini-3.8-flash',
+      estimates: Array.isArray(parsed) ? parsed : (parsed.estimates || getHeuristicEstimations(targetStories))
+    });
+  } catch (err: any) {
+    res.json({
+      success: true,
+      model: 'heuristic-kpi-engine-v1',
+      estimates: getHeuristicEstimations(targetStories),
+      fallbackUsed: true
+    });
+  }
+});
+
+// 15. AI CLUSTERING INTO FUNCTIONAL MODULES (BY THEME & PERSONA)
+aiRouter.post('/cluster-stories', async (req, res) => {
+  const { stories = [], productName, productId } = req.body;
+  const product = db.products.find(p => p.id === productId) || db.products[0];
+
+  const getHeuristicClusters = () => {
+    // Cluster stories into 3 thematic Functional Modules based on persona and narrative scope
+    const personaGroups: Record<string, any[]> = {};
+    stories.forEach((s: any) => {
+      const p = s.persona || 'General User';
+      if (!personaGroups[p]) personaGroups[p] = [];
+      personaGroups[p].push(s);
+    });
+
+    const personasList = Object.keys(personaGroups);
+    if (personasList.length >= 2) {
+      return personasList.map((pName, pIdx) => {
+        const groupStories = personaGroups[pName];
+        return {
+          id: `MOD-0${pIdx + 1}`,
+          title: pIdx === 0 
+            ? 'Core Checkout Velocity & Real-Time Underwriting Module'
+            : pIdx === 1 
+            ? 'Enterprise Integration, ERP Webhooks & Financial Reconciliation'
+            : 'Governance, Multi-Signer Compliance & Security Safeguards',
+          theme: pIdx === 0
+            ? 'Instant trade credit verification, EIN validation, and frictionless purchase order conversion.'
+            : pIdx === 1
+            ? 'Two-way NetSuite/SAP ledger synchronization with idempotent webhook listeners.'
+            : 'Hardware WebAuthn biometric dual-authorization and audit compliance telemetry.',
+          persona: pName,
+          strategicRationale: `Consolidates all capabilities serving ${pName}, optimizing end-to-end task completion and eliminating inter-team handoff friction.`,
+          storyIds: groupStories.map((s: any) => s.id),
+          targetKpis: ['Wholesale Cart Conversion', 'Decision Latency', 'SLA Uptime']
+        };
+      });
+    }
+
+    // Default 3 functional modules
+    return [
+      {
+        id: 'MOD-01',
+        title: 'Instant Trade Underwriting & Credit Risk Engine',
+        theme: 'Sub-60s credit evaluation, bureau API connector, and dynamic Net-30 credit allocation.',
+        persona: stories[0]?.persona || 'Wholesale Buyer / Procurement Manager',
+        strategicRationale: 'Directly resolves the 42% cart abandonment drop-off by removing 48-hour offline manual approval cycles.',
+        storyIds: stories.slice(0, 2).map((s: any) => s.id),
+        targetKpis: ['Wholesale Cart Conversion (+4.5%)', 'Underwriting Latency (<12s)']
+      },
+      {
+        id: 'MOD-02',
+        title: 'ERP Webhooks & Automated Ledger Synchronization',
+        theme: 'Idempotent webhook listeners, NetSuite/SAP connectors, and automated split-invoice requisitioning.',
+        persona: stories[1]?.persona || stories[0]?.persona || 'Operations & Finance Manager',
+        strategicRationale: 'Eliminates dual data entry and prevents ledger discrepancies across wholesale merchant ERPs.',
+        storyIds: stories.slice(2, 4).map((s: any) => s.id).length > 0 ? stories.slice(2, 4).map((s: any) => s.id) : [stories[0]?.id],
+        targetKpis: ['Invoice Reconciliation Error Rate (<0.5%)', 'Sync SLA (99.95%)']
+      },
+      {
+        id: 'MOD-03',
+        title: 'Security Governance & Multi-Signer Dual Approval',
+        theme: 'WebAuthn biometric signing, corporate spend limit thresholds, and zero-trust audit compliance.',
+        persona: stories[2]?.persona || stories[0]?.persona || 'Security & Compliance Officer',
+        strategicRationale: 'Satisfies enterprise SOC2 Type II controls and insurance requirements for high-ticket transactions.',
+        storyIds: stories.slice(4).map((s: any) => s.id).length > 0 ? stories.slice(4).map((s: any) => s.id) : [stories[stories.length - 1]?.id],
+        targetKpis: ['Chargeback Default Rate (<0.3%)', 'Unauthorized Wire Prevention (100%)']
+      }
+    ];
+  };
+
+  try {
+    const ai = getGeminiClient();
+    const systemInstruction = `You are a Principal Enterprise Agile Architect and Functional Domain Modeler.
+Group the provided backlog user stories into cohesive 'Functional Modules' based on shared strategic theme and target persona.
+Every user story MUST belong to exactly one functional module.
+Return JSON matching schema:
+{
+  "modules": [
+    {
+      "id": string (e.g. "MOD-01"),
+      "title": string,
+      "theme": string,
+      "persona": string,
+      "strategicRationale": string,
+      "storyIds": string[],
+      "targetKpis": string[]
+    }
+  ]
+}`;
+
+    const promptText = `Product: ${productName || product.name}
+Backlog Stories to Cluster:
+${JSON.stringify(stories.map((s: any) => ({
+  id: s.id,
+  epicTitle: s.epicTitle,
+  asA: s.asA,
+  iWant: s.iWant,
+  soThat: s.soThat,
+  persona: s.persona,
+  riceScore: s.riceScore
+})), null, 2)}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: [{ role: 'user', parts: [{ text: promptText }] }],
+      config: {
+        systemInstruction,
+        temperature: 0.2,
+        responseMimeType: 'application/json'
+      }
+    });
+
+    const rawText = response.text || '';
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText.replace(/```json/gi, '').replace(/```/g, '').trim());
+    } catch {
+      parsed = { modules: getHeuristicClusters() };
+    }
+
+    res.json({
+      success: true,
+      model: 'gemini-3.8-flash',
+      modules: parsed.modules || getHeuristicClusters()
+    });
+  } catch (err: any) {
+    res.json({
+      success: true,
+      model: 'heuristic-cluster-engine-v1',
+      modules: getHeuristicClusters(),
+      fallbackUsed: true
+    });
+  }
+});
+
+
 
 
 

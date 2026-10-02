@@ -306,6 +306,40 @@ export interface AcceptanceTestResult {
   assertions: { name: string; passed: boolean; message: string }[];
 }
 
+export interface E2ETestStep {
+  stepNumber: number;
+  action: string;
+  expectedResult: string;
+  testData?: string;
+  validationCheck?: string;
+  status?: 'IDLE' | 'RUNNING' | 'PASSED' | 'FAILED';
+}
+
+export interface E2ETestScenario {
+  id: string;
+  title: string;
+  description: string;
+  criticality: 'CRITICAL' | 'HIGH' | 'MEDIUM';
+  persona: string;
+  relatedStoryIds: string[];
+  coverageCategory: 'Happy Path' | 'Edge Case & Timeout' | 'Integration & Webhook' | 'Security & Biometrics' | 'Data Integrity';
+  preconditions: string[];
+  steps: E2ETestStep[];
+  postconditions: string[];
+  recoveryOrFallback?: string;
+  automationSnippet?: {
+    framework: 'Playwright' | 'Cypress';
+    code: string;
+  };
+  simulationStatus?: 'IDLE' | 'RUNNING' | 'PASSED' | 'FAILED';
+  simulationResult?: {
+    durationMs: number;
+    passedSteps: number;
+    totalSteps: number;
+    logs: string[];
+  };
+}
+
 export type ChatRolePreset = 
   | 'Lead Product Strategist' 
   | 'Agile Coach & Scrum Master' 

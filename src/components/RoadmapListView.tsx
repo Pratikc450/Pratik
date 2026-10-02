@@ -17,7 +17,13 @@ import {
   Clock,
   ShieldCheck,
   FileDown,
-  Download
+  Download,
+  CheckCircle2,
+  X,
+  Sliders,
+  BarChart3,
+  Target,
+  Zap
 } from 'lucide-react';
 import { Product, GeneratedArtifact } from '../types.js';
 import { ArtifactDiffViewer, VersionOption } from './ArtifactDiffViewer.js';
@@ -50,6 +56,15 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
   const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
   const [revisionSummary, setRevisionSummary] = useState('');
   const [isSubmittingRevision, setIsSubmittingRevision] = useState(false);
+
+  // AI Roadmap Visualizer (Gantt-Style Timeline) State
+  const [roadmapViewMode, setRoadmapViewMode] = useState<'HORIZONS' | 'GANTT_TIMELINE'>('HORIZONS');
+
+  // AI Sprint Scheduler State
+  const [isSprintSchedulerOpen, setIsSprintSchedulerOpen] = useState(false);
+  const [developerVelocity, setDeveloperVelocity] = useState<number>(24); // story points per 2-week sprint
+  const [sprintBacklogStories, setSprintBacklogStories] = useState<any[]>([]);
+  const [schedulerSuccess, setSchedulerSuccess] = useState<string | null>(null);
 
   const fetchRoadmaps = () => {
     setLoading(true);

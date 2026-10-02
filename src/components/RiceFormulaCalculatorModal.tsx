@@ -141,6 +141,81 @@ export const RiceFormulaCalculatorModal: React.FC<RiceFormulaCalculatorModalProp
 
   const calculatedTier = getTier(computedRiceScore);
 
+  // Sensitivity Analysis: Computes how a +10% or -10% change in each factor moves the score and relative rank in the backlog
+  const sensitivityAnalysis = useMemo(() => {
+    // Current score of all other stories in the backlog
+    const otherStoriesScores = stories
+      .filter(s => s.id !== activeStory?.id)
+      .map(s => s.riceScore ?? Math.round(((s.reach ?? 1000) * (s.impact ?? 2) * (s.confidence ?? 0.8)) / (s.effort ?? 2)));
+
+    const getRankForScore = (score: number) => {
+      const allScores = [...otherStoriesScores, score].sort((a, b) => b - a);
+      return allScores.indexOf(score) + 1;
+    };
+
+    const currentRank = getRankForScore(computedRiceScore);
+    const totalStories = stories.length;
+
+    // +10% Reach:
+    const reachUpScore = Math.round(((reach * 1.1 * impact * confidence) / effort) * 10) / 10;
+    const reachUpRank = getRankForScore(reachUpScore);
+
+    // +10% Impact:
+    const impactUpScore = Math.round(((reach * (impact * 1.1) * confidence) / effort) * 10) / 10;
+    const impactUpRank = getRankForScore(impactUpScore);
+
+    // +10% Confidence:
+    const confUpScore = Math.round(((reach * impact * (confidence * 1.1)) / effort) * 10) / 10;
+    const confUpRank = getRankForScore(confUpScore);
+
+    // -10% Effort (Effort reduction / engineering optimization):
+    const effortOptimizedScore = Math.round(((reach * impact * confidence) / (effort * 0.9)) * 10) / 10;
+    const effortOptimizedRank = getRankForScore(effortOptimizedScore);
+
+    return {
+      currentRank,
+      totalStories,
+      levers: [
+        {
+          name: 'Reach (+10%)',
+          newScore: reachUpScore,
+          deltaScore: Math.round(reachUpScore - computedRiceScore),
+          newRank: reachUpRank,
+          rankDelta: currentRank - reachUpRank,
+          color: 'text-cyan-400',
+          badge: currentRank - reachUpRank > 0 ? 'bg-cyan-950/80 text-cyan-300 border-cyan-700' : 'bg-slate-900 text-slate-400 border-slate-800'
+        },
+        {
+          name: 'Impact (+10%)',
+          newScore: impactUpScore,
+          deltaScore: Math.round(impactUpScore - computedRiceScore),
+          newRank: impactUpRank,
+          rankDelta: currentRank - impactUpRank,
+          color: 'text-purple-400',
+          badge: currentRank - impactUpRank > 0 ? 'bg-purple-950/80 text-purple-300 border-purple-700' : 'bg-slate-900 text-slate-400 border-slate-800'
+        },
+        {
+          name: 'Confidence (+10%)',
+          newScore: confUpScore,
+          deltaScore: Math.round(confUpScore - computedRiceScore),
+          newRank: confUpRank,
+          rankDelta: currentRank - confUpRank,
+          color: 'text-emerald-400',
+          badge: currentRank - confUpRank > 0 ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700' : 'bg-slate-900 text-slate-400 border-slate-800'
+        },
+        {
+          name: 'Effort (-10% Scope)',
+          newScore: effortOptimizedScore,
+          deltaScore: Math.round(effortOptimizedScore - computedRiceScore),
+          newRank: effortOptimizedRank,
+          rankDelta: currentRank - effortOptimizedRank,
+          color: 'text-amber-400',
+          badge: currentRank - effortOptimizedRank > 0 ? 'bg-amber-950/80 text-amber-300 border-amber-700' : 'bg-slate-900 text-slate-400 border-slate-800'
+        }
+      ]
+    };
+  }, [stories, activeStory, computedRiceScore, reach, impact, confidence, effort]);
+
   // AI Quick Auto-fill inside the modal
   const handleAiAutoFill = async () => {
     if (!activeStory) return;
@@ -584,6 +659,48 @@ export const RiceFormulaCalculatorModal: React.FC<RiceFormulaCalculatorModalProp
                   6.0w Distributed
                 </button>
               </div>
+            </div>
+          </div>
+
+          {/* 10% SENSITIVITY ANALYSIS FEATURE */}
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-purple-500/30 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-purple-400" />
+                <span className="text-xs font-bold text-slate-100">
+                  Sensitivity Analysis: ±10% Component Perturbation
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                  Rank Elasticity
+                </span>
+              </div>
+              <span className="text-xs font-mono text-slate-300">
+                Backlog Rank: <strong className="text-purple-300">#{sensitivityAnalysis.currentRank}</strong> of {sensitivityAnalysis.totalStories}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Simulates how a 10% movement in individual metrics changes the story's overall backlog priority ranking.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1">
+              {sensitivityAnalysis.levers.map((lever, idx) => (
+                <div key={idx} className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[11px] font-bold ${lever.color}`}>{lever.name}</span>
+                    <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${lever.badge}`}>
+                      {lever.rankDelta > 0 ? `▲ +${lever.rankDelta} Rank` : lever.rankDelta < 0 ? `▼ ${lever.rankDelta} Rank` : '• Same Rank'}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between text-xs font-mono">
+                    <span className="text-slate-400 text-[10px]">New Score:</span>
+                    <strong className="text-slate-100">{lever.newScore.toLocaleString()}</strong>
+                  </div>
+                  <div className="flex items-baseline justify-between text-xs font-mono">
+                    <span className="text-slate-400 text-[10px]">Backlog Rank:</span>
+                    <span className="text-emerald-400 font-bold">#{lever.newRank}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 

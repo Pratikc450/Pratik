@@ -1416,6 +1416,13 @@ Strategic Goals: ${strategicGoals || product.vision}`;
     }
   });
 
+  // 12b. Acceptance Test E2E Simulation Route
+  app.post('/api/tests/simulate-scenario', (req, res, next) => {
+    // Forward to aiRouter or handle directly
+    req.url = '/simulate-scenario';
+    aiRouter(req, res, next);
+  });
+
   // 13. Helper to reset token budget or seed
   app.post('/api/budget/reset', (req, res) => {
     db.tokenBudgetUsed = 4200;

@@ -38,6 +38,8 @@ const TIME_SERIES_INITIATIVES = [
     avgRiceScore: 840,
     confidencePct: 55,
     p0StoriesRatio: 0,
+    p1StoriesRatio: 25,
+    avgPriorityIndex: 28,
     underwritingScore: 714,
     reconciliationScore: 180,
     tradeLineScore: 450,
@@ -50,6 +52,8 @@ const TIME_SERIES_INITIATIVES = [
     avgRiceScore: 1373,
     confidencePct: 68,
     p0StoriesRatio: 0,
+    p1StoriesRatio: 50,
+    avgPriorityIndex: 44,
     underwritingScore: 2041,
     reconciliationScore: 400,
     tradeLineScore: 1680,
@@ -62,6 +66,8 @@ const TIME_SERIES_INITIATIVES = [
     avgRiceScore: 2589,
     confidencePct: 82,
     p0StoriesRatio: 33,
+    p1StoriesRatio: 50,
+    avgPriorityIndex: 68,
     underwritingScore: 4284,
     reconciliationScore: 640,
     tradeLineScore: 2844,
@@ -74,6 +80,8 @@ const TIME_SERIES_INITIATIVES = [
     avgRiceScore: 3197,
     confidencePct: 88,
     p0StoriesRatio: 66,
+    p1StoriesRatio: 33,
+    avgPriorityIndex: 88,
     underwritingScore: 4860,
     reconciliationScore: 680,
     tradeLineScore: 4053,
@@ -86,6 +94,8 @@ const TIME_SERIES_INITIATIVES = [
     avgRiceScore: 3410,
     confidencePct: 91,
     p0StoriesRatio: 66,
+    p1StoriesRatio: 34,
+    avgPriorityIndex: 94,
     underwritingScore: 4860,
     reconciliationScore: 920,
     tradeLineScore: 4450,
@@ -98,7 +108,7 @@ export const TelemetryDashboard: React.FC = () => {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [templates, setTemplates] = useState<any>({});
   const [isLoading, setIsLoading] = useState(false);
-  const [timeSeriesMode, setTimeSeriesMode] = useState<'AGGREGATE' | 'INITIATIVES' | 'CONFIDENCE'>('AGGREGATE');
+  const [timeSeriesMode, setTimeSeriesMode] = useState<'AGGREGATE' | 'INITIATIVES' | 'CONFIDENCE' | 'PRIORITY_SHIFT'>('AGGREGATE');
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -280,6 +290,14 @@ export const TelemetryDashboard: React.FC = () => {
             >
               Confidence & Hygiene
             </button>
+            <button
+              onClick={() => setTimeSeriesMode('PRIORITY_SHIFT')}
+              className={`px-3 py-1.5 rounded-lg transition-colors ${
+                timeSeriesMode === 'PRIORITY_SHIFT' ? 'bg-purple-600 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Priority Shift
+            </button>
           </div>
         </div>
 
@@ -386,7 +404,7 @@ export const TelemetryDashboard: React.FC = () => {
                 <Line type="monotone" dataKey="tradeLineScore" name="Trade Line Transparency" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4 }} />
                 <Line type="monotone" dataKey="reconciliationScore" name="ERP Webhook Reconciliation" stroke="#06b6d4" strokeWidth={2.5} dot={{ r: 4 }} />
               </LineChart>
-            ) : (
+            ) : timeSeriesMode === 'CONFIDENCE' ? (
               <LineChart data={TIME_SERIES_INITIATIVES} margin={{ top: 10, right: 25, left: 0, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                 <XAxis dataKey="shortLabel" stroke="#64748b" fontSize={11} tickLine={false} />
@@ -409,6 +427,33 @@ export const TelemetryDashboard: React.FC = () => {
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                 <Line type="monotone" dataKey="confidencePct" name="Telemetry-Grounded Confidence (%)" stroke="#10b981" strokeWidth={2.5} dot={{ r: 4 }} />
                 <Line type="monotone" dataKey="backlogHygieneIndex" name="INVEST Backlog Hygiene Index (0-100)" stroke="#06b6d4" strokeWidth={2.5} dot={{ r: 4 }} />
+              </LineChart>
+            ) : (
+              /* Priority Shift Visualization */
+              <LineChart data={TIME_SERIES_INITIATIVES} margin={{ top: 10, right: 25, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis dataKey="shortLabel" stroke="#64748b" fontSize={11} tickLine={false} />
+                <YAxis stroke="#64748b" fontSize={11} tickLine={false} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                <Tooltip 
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const d = payload[0].payload;
+                      return (
+                        <div className="p-3 rounded-xl bg-slate-950 border border-slate-700 shadow-xl text-xs space-y-1 font-mono">
+                          <div className="font-bold text-slate-200 font-sans border-b border-slate-800 pb-1">{d.sprint} ({d.date})</div>
+                          <div className="text-emerald-400">P0 Readiness Ratio: {d.p0StoriesRatio}%</div>
+                          <div className="text-cyan-400">P1 High-Priority Ratio: {d.p1StoriesRatio}%</div>
+                          <div className="text-purple-300 font-bold">Priority Velocity Index: {d.avgPriorityIndex} / 100</div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                <Line type="monotone" dataKey="p0StoriesRatio" name="P0 Critical Sprint-Ready Ratio (%)" stroke="#10b981" strokeWidth={3} dot={{ r: 5 }} />
+                <Line type="monotone" dataKey="p1StoriesRatio" name="P1 High-Priority Ratio (%)" stroke="#06b6d4" strokeWidth={2.5} dot={{ r: 4 }} />
+                <Line type="monotone" dataKey="avgPriorityIndex" name="Average Priority Shift Index (0-100)" stroke="#c084fc" strokeDasharray="4 4" strokeWidth={2.5} dot={{ r: 4 }} />
               </LineChart>
             )}
           </ResponsiveContainer>

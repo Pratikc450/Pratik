@@ -11,6 +11,7 @@ import { SettingsView } from './components/SettingsView.js';
 import { AcceptanceTestLab } from './components/AcceptanceTestLab.js';
 import { TelemetryDashboard } from './components/TelemetryDashboard.js';
 import { StakeholderInterestHeatmap } from './components/StakeholderInterestHeatmap.js';
+import { PriorityShiftVisualization } from './components/PriorityShiftVisualization.js';
 import { WorkspaceBrowser } from './components/WorkspaceBrowser.js';
 import { AiCopilotHub } from './components/AiCopilotHub.js';
 import { Product, UserProfile } from './types.js';
@@ -371,16 +372,30 @@ export default function App() {
                 onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
               />
               <div className="pt-8 border-t border-slate-800">
+                <PriorityShiftVisualization
+                  selectedProductId={selectedProductId}
+                  productName={currentProduct?.name}
+                />
+              </div>
+              <div className="pt-8 border-t border-slate-800">
                 <TelemetryDashboard />
               </div>
               <div className="pt-8 border-t border-slate-800">
-                <AcceptanceTestLab onTestCompleted={loadWorkspace} />
+                <AcceptanceTestLab 
+                  selectedProductId={selectedProductId}
+                  productName={currentProduct?.name}
+                  onTestCompleted={loadWorkspace} 
+                />
               </div>
             </div>
           )}
 
           {activeTab === 'tests' && (
-            <AcceptanceTestLab onTestCompleted={loadWorkspace} />
+            <AcceptanceTestLab 
+              selectedProductId={selectedProductId}
+              productName={currentProduct?.name}
+              onTestCompleted={loadWorkspace} 
+            />
           )}
 
           {activeTab === 'settings' && (

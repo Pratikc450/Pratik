@@ -5,6 +5,7 @@ import {
   Bar,
   ComposedChart,
   Line,
+  Legend,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -62,6 +63,7 @@ export const RiceScoreAnalytics: React.FC<RiceScoreAnalyticsProps> = ({
   const [activeTab, setActiveTab] = useState<'DISTRIBUTION' | 'QUADRANT' | 'COMPONENTS'>('DISTRIBUTION');
   const [quadrantViewType, setQuadrantViewType] = useState<'SCATTER' | 'CARDS'>('SCATTER');
   const [showHistoricalTrendline, setShowHistoricalTrendline] = useState<boolean>(true);
+  const [breakdownMode, setBreakdownMode] = useState<'AGGREGATE' | 'COMPONENTS'>('AGGREGATE');
 
   // Processed story scores
   const processedData = useMemo(() => {
@@ -82,6 +84,14 @@ export const RiceScoreAnalytics: React.FC<RiceScoreAnalyticsProps> = ({
       const velocity30dDelta = Math.round(riceScore - historical30dScore);
       const velocityPct = historical30dScore > 0 ? Math.round((velocity30dDelta / historical30dScore) * 100) : 0;
 
+      // Normalized components for side-by-side component breakdown view (0 - 100 scale)
+      const easeVal = Math.round((10 - (effort / 8) * 8) * 10) / 10;
+      const normReach = Math.min(100, Math.round(reach / 50));
+      const normImpact = Math.round((impact / 3) * 100);
+      const normConfidence = Math.round(confidence * 100);
+      const normEffort = Math.min(100, Math.round((effort / 8) * 100));
+      const normEase = Math.round(easeVal * 10);
+
       return {
         id: s.id,
         persona: s.persona,
@@ -94,6 +104,11 @@ export const RiceScoreAnalytics: React.FC<RiceScoreAnalyticsProps> = ({
         historical30dScore,
         velocity30dDelta,
         velocityPct,
+        normReach,
+        normImpact,
+        normConfidence,
+        normEffort,
+        normEase,
         tier,
         color,
         // Quadrant mapping: x = effort (w), y = impact (0-3), z = reach / score
@@ -101,7 +116,7 @@ export const RiceScoreAnalytics: React.FC<RiceScoreAnalyticsProps> = ({
         y: impact,
         z: Math.max(100, Math.min(1000, reach / 5)),
         // Ease normalized
-        ease: Math.round((10 - (effort / 8) * 8) * 10) / 10
+        ease: easeVal
       };
     }).sort((a, b) => b.riceScore - a.riceScore);
   }, [stories]);
@@ -445,22 +460,51 @@ export const RiceScoreAnalytics: React.FC<RiceScoreAnalyticsProps> = ({
 
       {/* Main Chart Section */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between text-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2">
             <Compass className="w-4 h-4 text-purple-400" />
             <span className="font-bold text-slate-200">
-              {activeTab === 'DISTRIBUTION' ? 'Story Score Distribution by Priority Tier' : 'Impact vs. Effort Strategic Quadrants'}
+              {activeTab === 'DISTRIBUTION' 
+                ? (breakdownMode === 'AGGREGATE' ? 'Story Score Distribution by Priority Tier' : 'R·I·C·E Component Breakdown (Normalized 0-100)')
+                : 'Impact vs. Effort Strategic Quadrants'}
             </span>
           </div>
-          <span className="text-[11px] text-slate-500">
-            {activeTab === 'DISTRIBUTION' ? 'Click bar to inspect story' : 'Top-left represents highest ROI quick wins'}
-          </span>
+
+          <div className="flex items-center gap-3">
+            {activeTab === 'DISTRIBUTION' && (
+              <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] font-semibold shadow-inner">
+                <button
+                  onClick={() => setBreakdownMode('AGGREGATE')}
+                  className={`px-3 py-1 rounded-lg transition-colors flex items-center gap-1.5 ${
+                    breakdownMode === 'AGGREGATE' ? 'bg-purple-600 text-white shadow-xs font-bold' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="View total aggregate RICE priority score per story"
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  <span>Aggregate RICE Score</span>
+                </button>
+                <button
+                  onClick={() => setBreakdownMode('COMPONENTS')}
+                  className={`px-3 py-1 rounded-lg transition-colors flex items-center gap-1.5 ${
+                    breakdownMode === 'COMPONENTS' ? 'bg-purple-600 text-white shadow-xs font-bold' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Toggle view to individual Reach, Impact, Confidence, and Effort breakdown"
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Component Breakdown</span>
+                </button>
+              </div>
+            )}
+            <span className="text-[11px] text-slate-500 hidden md:inline">
+              {activeTab === 'DISTRIBUTION' ? (breakdownMode === 'AGGREGATE' ? 'Click bar to inspect story' : 'Normalized Reach, Impact, Confidence, Effort') : 'Top-left represents highest ROI quick wins'}
+            </span>
+          </div>
         </div>
 
         {activeTab === 'DISTRIBUTION' ? (
           <div className="space-y-3 animate-in fade-in duration-300">
             {/* Score Velocity Insights Strip when historical trendline is active */}
-            {showHistoricalTrendline && (
+            {breakdownMode === 'AGGREGATE' && showHistoricalTrendline && (
               <div className="p-3.5 rounded-xl bg-gradient-to-r from-purple-950/40 via-slate-900 to-indigo-950/40 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs animate-in fade-in duration-200">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shadow-inner shrink-0">
@@ -494,92 +538,123 @@ export const RiceScoreAnalytics: React.FC<RiceScoreAnalyticsProps> = ({
 
             <div className="w-full h-72 pt-1">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart 
-                  key={`composedchart-${updateKey}-${showHistoricalTrendline ? 'trend-on' : 'trend-off'}`}
-                  data={chartData} 
-                  margin={{ top: 15, right: 25, left: 0, bottom: 20 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis 
-                    dataKey="id" 
-                    stroke="#64748b" 
-                    fontSize={11} 
-                    tickLine={false}
-                    axisLine={{ stroke: '#334155' }}
-                  />
-                  <YAxis 
-                    stroke="#64748b" 
-                    fontSize={11} 
-                    tickLine={false}
-                    axisLine={{ stroke: '#334155' }}
-                    tickFormatter={(v) => `${v}`}
-                  />
-                  <Tooltip content={<CustomBarTooltip />} />
-                  
-                  {/* Reference Lines for P0 and Average */}
-                  <ReferenceLine 
-                    y={3000} 
-                    stroke="#10b981" 
-                    strokeDasharray="4 4" 
-                    label={{ value: 'P0 Gate (3,000)', fill: '#10b981', fontSize: 10, position: 'right' }} 
-                  />
-                  <ReferenceLine 
-                    y={avgRice} 
-                    stroke="#94a3b8" 
-                    strokeDasharray="3 3" 
-                    label={{ value: `Avg (${avgRice})`, fill: '#94a3b8', fontSize: 10, position: 'insideTopLeft' }} 
-                  />
-
-                  {/* Primary Story Score Bars */}
-                  <Bar 
-                    key={`bar-${updateKey}`}
-                    dataKey="riceScore" 
-                    name="Current RICE Score"
-                    radius={[6, 6, 0, 0]}
-                    onClick={(entry: any) => onSelectStory && entry?.id && onSelectStory(entry.id)}
-                    cursor="pointer"
-                    isAnimationActive={true}
-                    animationDuration={1100}
-                    animationEasing="ease-out"
-                    animationBegin={80}
+                {breakdownMode === 'COMPONENTS' ? (
+                  <BarChart
+                    key={`barchart-breakdown-${updateKey}`}
+                    data={processedData}
+                    margin={{ top: 15, right: 25, left: 0, bottom: 20 }}
                   >
-                    {chartData.map((entry, index) => (
-                      <Cell 
-                        key={`cell-${entry.id}-${index}`} 
-                        fill={entry.color} 
-                        className="transition-all duration-300 hover:brightness-125"
-                      />
-                    ))}
-                  </Bar>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis 
+                      dataKey="id" 
+                      stroke="#64748b" 
+                      fontSize={11} 
+                      tickLine={false} 
+                      axisLine={{ stroke: '#334155' }} 
+                    />
+                    <YAxis 
+                      stroke="#64748b" 
+                      fontSize={11} 
+                      tickLine={false} 
+                      axisLine={{ stroke: '#334155' }} 
+                      domain={[0, 100]} 
+                      tickFormatter={(v) => `${v}%`} 
+                    />
+                    <Tooltip content={<CustomBarTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+                    <Bar dataKey="normReach" name="Reach" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="normImpact" name="Impact" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="normConfidence" name="Confidence" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="normEffort" name="Effort" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                ) : (
+                  <ComposedChart 
+                    key={`composedchart-${updateKey}-${showHistoricalTrendline ? 'trend-on' : 'trend-off'}`}
+                    data={chartData} 
+                    margin={{ top: 15, right: 25, left: 0, bottom: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis 
+                      dataKey="id" 
+                      stroke="#64748b" 
+                      fontSize={11} 
+                      tickLine={false}
+                      axisLine={{ stroke: '#334155' }}
+                    />
+                    <YAxis 
+                      stroke="#64748b" 
+                      fontSize={11} 
+                      tickLine={false}
+                      axisLine={{ stroke: '#334155' }}
+                      tickFormatter={(v) => `${v}`}
+                    />
+                    <Tooltip content={<CustomBarTooltip />} />
+                    
+                    {/* Reference Lines for P0 and Average */}
+                    <ReferenceLine 
+                      y={3000} 
+                      stroke="#10b981" 
+                      strokeDasharray="4 4" 
+                      label={{ value: 'P0 Gate (3,000)', fill: '#10b981', fontSize: 10, position: 'right' }} 
+                    />
+                    <ReferenceLine 
+                      y={avgRice} 
+                      stroke="#94a3b8" 
+                      strokeDasharray="3 3" 
+                      label={{ value: `Avg (${avgRice})`, fill: '#94a3b8', fontSize: 10, position: 'insideTopLeft' }} 
+                    />
 
-                  {/* Overlaid 30-Day Historical Trendlines & Score Velocity */}
-                  {showHistoricalTrendline && (
-                    <>
-                      <Line
-                        type="monotone"
-                        dataKey="historical30dScore"
-                        name="30d Historical Score"
-                        stroke="#c084fc"
-                        strokeWidth={2.5}
-                        dot={{ fill: '#9333ea', stroke: '#e9d5ff', strokeWidth: 1.5, r: 4 }}
-                        activeDot={{ r: 6, fill: '#f3e8ff' }}
-                        isAnimationActive={true}
-                        animationDuration={1200}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="historicalAvgLine"
-                        name="30d Rolling Mean"
-                        stroke="#38bdf8"
-                        strokeWidth={1.5}
-                        strokeDasharray="4 4"
-                        dot={false}
-                        isAnimationActive={true}
-                        animationDuration={1400}
-                      />
-                    </>
-                  )}
-                </ComposedChart>
+                    {/* Primary Story Score Bars */}
+                    <Bar 
+                      key={`bar-${updateKey}`}
+                      dataKey="riceScore" 
+                      name="Current RICE Score"
+                      radius={[6, 6, 0, 0]}
+                      onClick={(entry: any) => onSelectStory && entry?.id && onSelectStory(entry.id)}
+                      cursor="pointer"
+                      isAnimationActive={true}
+                      animationDuration={1100}
+                      animationEasing="ease-out"
+                      animationBegin={80}
+                    >
+                      {chartData.map((entry, index) => (
+                        <Cell 
+                          key={`cell-${entry.id}-${index}`} 
+                          fill={entry.color} 
+                          className="transition-all duration-300 hover:brightness-125"
+                        />
+                      ))}
+                    </Bar>
+
+                    {/* Overlaid 30-Day Historical Trendlines & Score Velocity */}
+                    {showHistoricalTrendline && (
+                      <>
+                        <Line
+                          type="monotone"
+                          dataKey="historical30dScore"
+                          name="30d Historical Score"
+                          stroke="#c084fc"
+                          strokeWidth={2.5}
+                          dot={{ fill: '#9333ea', stroke: '#e9d5ff', strokeWidth: 1.5, r: 4 }}
+                          activeDot={{ r: 6, fill: '#f3e8ff' }}
+                          isAnimationActive={true}
+                          animationDuration={1200}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="historicalAvgLine"
+                          name="30d Rolling Mean"
+                          stroke="#38bdf8"
+                          strokeWidth={1.5}
+                          strokeDasharray="4 4"
+                          dot={false}
+                          isAnimationActive={true}
+                          animationDuration={1400}
+                        />
+                      </>
+                    )}
+                  </ComposedChart>
+                )}
               </ResponsiveContainer>
             </div>
           </div>
