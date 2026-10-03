@@ -31,7 +31,10 @@ import {
   Target,
   Boxes,
   FolderTree,
-  Activity
+  Activity,
+  ShieldCheck,
+  GitBranch,
+  Gauge
 } from 'lucide-react';
 import { Product, GeneratedArtifact } from '../types.js';
 import { 
@@ -48,6 +51,11 @@ import { StoryNextBestActions } from './StoryNextBestActions.js';
 import { RiceFormulaCalculatorModal } from './RiceFormulaCalculatorModal.js';
 import { SmartEpicMappingModal } from './SmartEpicMappingModal.js';
 import { PersonaFilterBar } from './PersonaFilterBar.js';
+import { ConfidenceAuditModal } from './ConfidenceAuditModal.js';
+import { StoryImpactForecastModal } from './StoryImpactForecastModal.js';
+import { SprintVelocityPredictor } from './SprintVelocityPredictor.js';
+import { StoryDependencyMapperModal } from './StoryDependencyMapperModal.js';
+import { AiRiceSuggestionEngineModal } from './AiRiceSuggestionEngineModal.js';
 
 interface UserStoryListViewProps {
   selectedProductId: string;
@@ -216,6 +224,23 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
   }>>({});
   const [isLoadingKpis, setIsLoadingKpis] = useState<boolean>(false);
 
+  // AI Confidence Audit State
+  const [isConfidenceAuditOpen, setIsConfidenceAuditOpen] = useState<boolean>(false);
+
+  // AI Impact Forecast State
+  const [isImpactForecastOpen, setIsImpactForecastOpen] = useState<boolean>(false);
+  const [forecastTargetStory, setForecastTargetStory] = useState<any | null>(null);
+
+  // AI Dependency Mapper State
+  const [isDependencyMapperOpen, setIsDependencyMapperOpen] = useState<boolean>(false);
+
+  // Sprint Velocity Predictor State
+  const [showSprintPredictor, setShowSprintPredictor] = useState<boolean>(true);
+
+  // AI Suggestion Engine State
+  const [isSuggestionEngineOpen, setIsSuggestionEngineOpen] = useState<boolean>(false);
+  const [workspacePersonas, setWorkspacePersonas] = useState<any[]>([]);
+
   const defaultStories = [
     {
       id: 'US-101',
@@ -281,6 +306,9 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
       .then(data => {
         const storiesArt = (data.artifacts || []).find((a: any) => a.taskType === 'USER_STORIES');
         setStoriesArtifact(storiesArt || null);
+        if (data.personas && Array.isArray(data.personas)) {
+          setWorkspacePersonas(data.personas);
+        }
         if (storiesArt?.schemaData?.stories && storiesArt.schemaData.stories.length > 0) {
           setLocalStories(storiesArt.schemaData.stories);
           setSelectedCalcStoryId(storiesArt.schemaData.stories[0].id);
@@ -360,6 +388,47 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
       console.warn('Failed to cluster stories', err);
     } finally {
       setIsClustering(false);
+    }
+  };
+
+  // AI Confidence Audit Batch Update Handler
+  const handleApplyAuditUpdates = async (updates: Array<{ id: string; confidence: number; riceScore: number; priority?: string }>) => {
+    if (!storiesArtifact) return;
+    try {
+      const res = await fetch(`/api/artifacts/${storiesArtifact.id}/stories-bulk`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.artifact?.schemaData?.stories) {
+          setStoriesArtifact(data.artifact);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to apply confidence audit updates', err);
+    }
+  };
+
+  // AI Suggestion Engine Batch Update Handler
+  const handleApplyScoreSuggestions = async (updates: Array<{ id: string; impact?: number; effort?: number; confidence?: number; riceScore?: number; priority?: string }>) => {
+    if (!storiesArtifact) return;
+    try {
+      const res = await fetch(`/api/artifacts/${storiesArtifact.id}/stories-bulk`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.artifact?.schemaData?.stories) {
+          setStoriesArtifact(data.artifact);
+          setLocalStories(data.artifact.schemaData.stories);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to apply score suggestions', err);
     }
   };
 
@@ -1598,6 +1667,56 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
             <span>{isLoadingKpis ? 'Estimating...' : 'AI KPI Preview'}</span>
           </button>
 
+          {/* AI Suggestion Engine Button */}
+          <button
+            onClick={() => setIsSuggestionEngineOpen(true)}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-gradient-to-r from-indigo-900/90 to-purple-900/90 hover:from-indigo-800 hover:to-purple-800 text-indigo-100 border border-indigo-700/80 flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-indigo-950/40"
+            title="AI Suggestion Engine: Automatically recommends Value, Effort, and Confidence updates based on Persona data & historical RICE trends"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-300" />
+            <span>AI Suggestion Engine</span>
+            <span className="px-1 py-0.2 rounded text-[9px] font-mono bg-indigo-950 text-indigo-300 border border-indigo-800">
+              Value · Effort · Conf
+            </span>
+          </button>
+
+          {/* AI Confidence Audit Button */}
+          <button
+            onClick={() => setIsConfidenceAuditOpen(true)}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-950/80 hover:bg-purple-900 text-purple-200 border border-purple-800/70 flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+            title="AI Confidence Audit: Analyzes rationale against historical delivery telemetry & suggests adjustments"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-purple-300" />
+            <span>Confidence Audit</span>
+            <span className="px-1 py-0.2 rounded text-[9px] font-mono bg-purple-900 text-purple-200">
+              Telemetry
+            </span>
+          </button>
+
+          {/* AI Dependency Mapper Button */}
+          <button
+            onClick={() => setIsDependencyMapperOpen(true)}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+            title="AI Dependency Mapper: Visualizes inter-story dependencies and critical path bottlenecks"
+          >
+            <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Dependency Mapper</span>
+          </button>
+
+          {/* Sprint Velocity Predictor Toggle Button */}
+          <button
+            onClick={() => setShowSprintPredictor(!showSprintPredictor)}
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-all cursor-pointer ${
+              showSprintPredictor
+                ? 'bg-indigo-950 text-indigo-300 border-indigo-700 font-bold shadow-xs'
+                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+            title="Toggle Sprint Velocity Predictor & Capacity Planner"
+          >
+            <Gauge className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Velocity Predictor</span>
+          </button>
+
           {/* Re-cluster Modules Button if in Modules mode */}
           {viewMode === 'MODULES' && (
             <button
@@ -1643,6 +1762,16 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
           </button>
         </div>
       </div>
+
+      {/* SPRINT VELOCITY PREDICTOR */}
+      {showSprintPredictor && (
+        <SprintVelocityPredictor
+          stories={localStories}
+          onCommitScope={(ids) => {
+            setSelectedStoryIds(ids);
+          }}
+        />
+      )}
 
       {/* BULK ACTION TOOLBAR (SELECTION & BATCH UPDATING) */}
       {selectedStoryIds.length > 0 && (
@@ -1946,6 +2075,29 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                     >
                       <Sliders className="w-3.5 h-3.5 text-indigo-400" />
                       <span className="hidden lg:inline">Calibrate Modal</span>
+                    </button>
+
+                    {/* AI Impact Forecast Button on Story Card */}
+                    <button
+                      onClick={() => {
+                        setForecastTargetStory(story);
+                        setIsImpactForecastOpen(true);
+                      }}
+                      className="px-2 py-1.5 rounded-lg bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/60 text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
+                      title="AI Impact Forecast: Implemented vs. Ignored Simulation"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="hidden sm:inline">Impact Forecast</span>
+                    </button>
+
+                    {/* AI Suggest Scores Button on Story Card */}
+                    <button
+                      onClick={() => setIsSuggestionEngineOpen(true)}
+                      className="px-2 py-1.5 rounded-lg bg-indigo-950/70 hover:bg-indigo-900/80 text-indigo-300 border border-indigo-800/60 text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
+                      title="AI Suggestion Engine: Recommend Value, Effort, and Confidence updates based on Persona data & historical RICE trends"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                      <span className="hidden sm:inline">Suggest Scores</span>
                     </button>
 
                     <button
@@ -2500,6 +2652,55 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
         productName={activeProduct?.name}
         productContext={activeProduct?.description}
         onApplyMappings={handleApplyEpicMappings}
+      />
+
+      {/* AI CONFIDENCE AUDIT MODAL (TELEMETRY GROUNDED) */}
+      <ConfidenceAuditModal
+        isOpen={isConfidenceAuditOpen}
+        onClose={() => setIsConfidenceAuditOpen(false)}
+        stories={localStories}
+        productId={selectedProductId}
+        productName={activeProduct?.name}
+        artifactId={storiesArtifact?.id}
+        onApplyUpdates={handleApplyAuditUpdates}
+      />
+
+      {/* AI IMPACT FORECAST MODAL (IMPLEMENTED VS. IGNORED) */}
+      <StoryImpactForecastModal
+        isOpen={isImpactForecastOpen}
+        onClose={() => {
+          setIsImpactForecastOpen(false);
+          setForecastTargetStory(null);
+        }}
+        story={forecastTargetStory || localStories[0]}
+        allStories={localStories}
+        productId={selectedProductId}
+        productName={activeProduct?.name}
+        onSelectStory={(s) => setForecastTargetStory(s)}
+      />
+
+      {/* AI DEPENDENCY MAPPER MODAL (NLP NETWORK GRAPH) */}
+      <StoryDependencyMapperModal
+        isOpen={isDependencyMapperOpen}
+        onClose={() => setIsDependencyMapperOpen(false)}
+        stories={localStories}
+        productId={selectedProductId}
+        productName={activeProduct?.name}
+        onSelectStory={(id) => {
+          const s = localStories.find(item => item.id === id);
+          if (s) setSelectedStory(s);
+        }}
+      />
+
+      {/* AI RICE SUGGESTION ENGINE MODAL (PERSONA & TREND GROUNDED) */}
+      <AiRiceSuggestionEngineModal
+        isOpen={isSuggestionEngineOpen}
+        onClose={() => setIsSuggestionEngineOpen(false)}
+        stories={localStories}
+        personas={workspacePersonas}
+        productId={selectedProductId}
+        productName={activeProduct?.name}
+        onApplySuggestions={handleApplyScoreSuggestions}
       />
     </div>
   );

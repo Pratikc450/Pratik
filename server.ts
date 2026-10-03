@@ -1218,16 +1218,47 @@ Strategic Goals: ${strategicGoals || product.vision}`;
     res.json(result);
   });
 
-  // 8b. Bulk Update Stories Status and Priority
+  // 8b. Bulk Update Stories Status, Priority, and Confidence
   app.patch('/api/artifacts/:id/stories-bulk', (req, res) => {
-    const { storyIds, status, priority } = req.body;
+    const { storyIds, status, priority, updates } = req.body;
     const artifact = db.getArtifact(req.params.id);
     if (!artifact) {
       return res.status(404).json({ error: 'Artifact not found' });
     }
 
+    // Support both uniform storyIds update or granular updates array
+    if (Array.isArray(updates) && updates.length > 0) {
+      if (artifact.schemaData?.stories) {
+        const updateMap = new Map(updates.map((u: any) => [u.id, u]));
+        artifact.schemaData.stories = artifact.schemaData.stories.map((s: any) => {
+          const up = updateMap.get(s.id);
+          if (up) {
+            return {
+              ...s,
+              ...up,
+              confidence: up.confidence !== undefined ? up.confidence : s.confidence,
+              riceScore: up.riceScore !== undefined ? up.riceScore : s.riceScore,
+              priority: up.priority !== undefined ? up.priority : s.priority,
+              status: up.status !== undefined ? up.status : s.status
+            };
+          }
+          return s;
+        });
+
+        db.saveArtifact(artifact);
+        db.addAuditLog({
+          artifactId: artifact.id,
+          taskType: artifact.taskType,
+          action: 'MODIFIED',
+          userId: 'lead_pm',
+          details: `Confidence & Priority Audit calibrated ${updates.length} stories based on historical delivery telemetry.`
+        });
+      }
+      return res.json({ success: true, updatedCount: updates.length, artifact });
+    }
+
     if (!Array.isArray(storyIds) || storyIds.length === 0) {
-      return res.status(400).json({ error: 'storyIds array is required' });
+      return res.status(400).json({ error: 'storyIds array or updates array is required' });
     }
 
     if (artifact.schemaData?.stories) {

@@ -12,6 +12,9 @@ import { AcceptanceTestLab } from './components/AcceptanceTestLab.js';
 import { TelemetryDashboard } from './components/TelemetryDashboard.js';
 import { StakeholderInterestHeatmap } from './components/StakeholderInterestHeatmap.js';
 import { PriorityShiftVisualization } from './components/PriorityShiftVisualization.js';
+import { RiceMomentumHeatmap } from './components/RiceMomentumHeatmap.js';
+import { PersonaGapAnalysis } from './components/PersonaGapAnalysis.js';
+import { FinancialImpactScatterPlot } from './components/FinancialImpactScatterPlot.js';
 import { WorkspaceBrowser } from './components/WorkspaceBrowser.js';
 import { AiCopilotHub } from './components/AiCopilotHub.js';
 import { Product, UserProfile } from './types.js';
@@ -39,6 +42,22 @@ export default function App() {
   // Firebase User & Firestore connectivity state
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState<boolean>(false);
+  const [analyticsStories, setAnalyticsStories] = useState<any[]>([]);
+
+  // Fetch stories for Analytics visualizers
+  useEffect(() => {
+    if (selectedProductId) {
+      fetch(`/api/products/${selectedProductId}`)
+        .then(res => res.json())
+        .then(data => {
+          const storyArt = data.artifacts?.find((a: any) => a.taskType === 'USER_STORIES');
+          if (storyArt?.schemaData?.stories) {
+            setAnalyticsStories(storyArt.schemaData.stories);
+          }
+        })
+        .catch(err => console.warn('Failed to fetch analytics stories', err));
+    }
+  }, [selectedProductId]);
 
   // Test Firestore connection on mount
   useEffect(() => {
@@ -367,19 +386,53 @@ export default function App() {
 
           {activeTab === 'analytics' && (
             <div className="space-y-8">
+              {/* Stakeholder Heatmap */}
               <StakeholderInterestHeatmap 
                 selectedProductId={selectedProductId}
                 onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
               />
+
+              {/* Priority Shift Trajectory */}
               <div className="pt-8 border-t border-slate-800">
                 <PriorityShiftVisualization
                   selectedProductId={selectedProductId}
                   productName={currentProduct?.name}
                 />
               </div>
+
+              {/* AI Financial Impact vs. RICE Score Scatter Plot (Quick Wins) */}
+              <div className="pt-8 border-t border-slate-800">
+                <FinancialImpactScatterPlot
+                  stories={analyticsStories}
+                  productName={currentProduct?.name}
+                  onSelectStory={() => setActiveTab('stories')}
+                />
+              </div>
+
+              {/* RICE Momentum Heatmap */}
+              <div className="pt-8 border-t border-slate-800">
+                <RiceMomentumHeatmap
+                  stories={analyticsStories}
+                  productName={currentProduct?.name}
+                  onSelectStory={() => setActiveTab('stories')}
+                />
+              </div>
+
+              {/* Persona Gap & Coverage Analysis */}
+              <div className="pt-8 border-t border-slate-800">
+                <PersonaGapAnalysis
+                  stories={analyticsStories}
+                  productName={currentProduct?.name}
+                  onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+                />
+              </div>
+
+              {/* Telemetry Dashboard */}
               <div className="pt-8 border-t border-slate-800">
                 <TelemetryDashboard />
               </div>
+
+              {/* Acceptance Test Lab */}
               <div className="pt-8 border-t border-slate-800">
                 <AcceptanceTestLab 
                   selectedProductId={selectedProductId}
