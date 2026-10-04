@@ -1087,6 +1087,95 @@ class ProductPilotDatabase {
       openQuestions: ['Which international banking hubs require physical token fob support?']
     };
 
+    const attachStoryHistory = (story: any) => {
+      if (story.history && story.history.length > 0) return story;
+      const v1Date = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+      const v2Date = new Date(Date.now() - 14 * 3600 * 1000).toISOString();
+      const v3Date = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+
+      const v1Snapshot = {
+        asA: story.asA,
+        iWant: (story.iWant || '').slice(0, Math.floor((story.iWant || '').length * 0.7)),
+        soThat: story.soThat,
+        acceptanceCriteria: story.acceptanceCriteria && story.acceptanceCriteria.length > 0 ? [story.acceptanceCriteria[0]] : ['Initial acceptance criteria draft'],
+        reach: Math.round((story.reach || 2500) * 0.7),
+        impact: Math.max(1, (story.impact || 2) - 1),
+        confidence: 0.6,
+        effort: (story.effort || 2) + 1,
+        riceScore: Math.round(((Math.round((story.reach || 2500) * 0.7) * Math.max(1, (story.impact || 2) - 1) * 0.6) / ((story.effort || 2) + 1))),
+        priority: 'P2',
+        status: 'BACKLOG',
+        epicTitle: story.epicTitle,
+        persona: story.persona
+      };
+
+      const v2Snapshot = {
+        asA: story.asA,
+        iWant: story.iWant,
+        soThat: story.soThat,
+        acceptanceCriteria: story.acceptanceCriteria || [],
+        reach: story.reach || 3000,
+        impact: story.impact || 2,
+        confidence: Math.max(0.65, (story.confidence || 0.8) - 0.1),
+        effort: story.effort || 2,
+        riceScore: Math.round((story.riceScore || 2500) * 0.85),
+        priority: story.priority || 'P1',
+        status: 'READY_FOR_DEV',
+        epicTitle: story.epicTitle,
+        persona: story.persona
+      };
+
+      const v3Snapshot = {
+        asA: story.asA,
+        iWant: story.iWant,
+        soThat: story.soThat,
+        acceptanceCriteria: story.acceptanceCriteria || [],
+        reach: story.reach,
+        impact: story.impact,
+        confidence: story.confidence,
+        effort: story.effort,
+        riceScore: story.riceScore,
+        priority: story.priority || 'P0',
+        status: story.status || 'READY_FOR_DEV',
+        approvalStatus: story.approvalStatus,
+        epicTitle: story.epicTitle,
+        persona: story.persona
+      };
+
+      return {
+        ...story,
+        version: 3,
+        history: [
+          {
+            version: 1,
+            timestamp: v1Date,
+            author: 'AI Spec Generator (Gemini 3.5 Pro)',
+            changeSummary: 'Initial story generation and baseline scoping from Discovery Brief',
+            fieldsChanged: ['asA', 'iWant', 'soThat', 'acceptanceCriteria'],
+            snapshot: v1Snapshot
+          },
+          {
+            version: 2,
+            timestamp: v2Date,
+            author: 'Alex Rivera (VP of Product)',
+            changeSummary: 'Added strict Gherkin acceptance criteria and calibrated initial RICE parameters',
+            fieldsChanged: ['acceptanceCriteria', 'confidence', 'riceScore', 'status'],
+            snapshot: v2Snapshot
+          },
+          {
+            version: 3,
+            timestamp: v3Date,
+            author: 'Lead Product Manager',
+            changeSummary: 'Finalized RICE Reach & Confidence metrics and committed to sprint scope',
+            fieldsChanged: ['priority', 'riceScore', 'reach', 'confidence'],
+            snapshot: v3Snapshot
+          }
+        ]
+      };
+    };
+
+    storiesBankingData.stories = storiesBankingData.stories.map(attachStoryHistory);
+
     const storiesBankingMarkdown = renderArtifactToProse('USER_STORIES', storiesBankingData);
 
     const storiesBankingArtifact: GeneratedArtifact = {
@@ -1199,6 +1288,8 @@ class ProductPilotDatabase {
       dependencies: ['Dun & Bradstreet scoring API', 'Plaid Corporate Auth'],
       openQuestions: ['What is maximum single-order unsecured limit?']
     };
+
+    storiesPayflowData.stories = storiesPayflowData.stories.map(attachStoryHistory);
 
     const storiesPayflowMarkdown = renderArtifactToProse('USER_STORIES', storiesPayflowData);
 

@@ -3,7 +3,7 @@ import { gatherContextForTask } from './contextGatherer.js';
 import { PROMPT_TEMPLATES } from './promptTemplates.js';
 import { SchemaRegistry } from './schemas.js';
 import { renderArtifactToProse } from './renderer.js';
-import { getGeminiClient, MODELS } from './geminiClient.js';
+import { getGeminiClient, MODELS, isGeminiQuotaExhausted, markQuotaExhausted } from './geminiClient.js';
 import { synthesizeDomainArtifact } from './syntheticGenerator.js';
 import {
   ArtifactType,
@@ -120,8 +120,8 @@ export async function runGenerationPipeline(req: GenerationRequest): Promise<Gen
 
   // Function to call Gemini with retry policy & rate-limit shield cascade
   const callModelWithCascade = async (promptText: string, sysPrompt: string): Promise<string> => {
-    // If no Gemini API key configured, instantly use Domain Context Synthesis Shield to guarantee high performance
-    if (!process.env.GEMINI_API_KEY) {
+    // If no Gemini API key configured or quota exhausted, instantly use Domain Context Synthesis Shield
+    if ((!process.env.GEMINI_API_KEY || isGeminiQuotaExhausted()) && !req.simulateTimeout) {
       emit('model_cascade', `[ZERO-CONFIG SHIELD] Utilizing high-performance Domain Context Synthesis Shield.`);
       usedFallback = true;
       modelToUse = 'domain-context-shield-v1';
@@ -171,17 +171,22 @@ export async function runGenerationPipeline(req: GenerationRequest): Promise<Gen
         }
 
         // Check if error is 429 quota exhaustion, 503 high demand, or auth/network issue
-        const isQuotaOrDemand = err.message.includes('429') || 
-                               err.message.includes('503') || 
-                               err.message.includes('RESOURCE_EXHAUSTED') ||
-                               err.message.includes('UNAVAILABLE') ||
-                               err.message.includes('quota') ||
-                               err.message.includes('API_KEY') ||
-                               err.message.includes('API key') ||
-                               err.message.includes('ENOTFOUND');
+        const errMsg = err?.message || String(err);
+        const isQuotaOrDemand = err?.status === 429 ||
+                               errMsg.includes('429') || 
+                               errMsg.includes('503') || 
+                               errMsg.includes('RESOURCE_EXHAUSTED') ||
+                               errMsg.includes('UNAVAILABLE') ||
+                               errMsg.includes('quota') ||
+                               errMsg.includes('API_KEY') ||
+                               errMsg.includes('API key') ||
+                               errMsg.includes('ENOTFOUND');
 
         if (isQuotaOrDemand) {
-          emit('model_cascade', `[MODEL CASCADE ACTIVE] Provider constraint (${err.message.substring(0, 40)}) encountered. Cascading seamlessly to Domain Context Synthesis Shield.`);
+          if (err?.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota')) {
+            markQuotaExhausted();
+          }
+          emit('model_cascade', `[MODEL CASCADE ACTIVE] Provider constraint encountered. Cascading seamlessly to Domain Context Synthesis Shield.`);
           usedFallback = true;
           modelToUse = 'domain-context-shield-v1';
           const syntheticData = synthesizeDomainArtifact(req.taskType, req.productId, req.userRequest);

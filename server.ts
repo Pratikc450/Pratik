@@ -14,6 +14,26 @@ import { ArtifactType } from './src/types.js';
 import { renderArtifactToProse } from './src/server/renderer.js';
 import { aiRouter } from './src/server/aiRouter.js';
 import { getGeminiClient } from './src/server/geminiClient.js';
+import { validateBody } from './src/server/validationMiddleware.js';
+import {
+  GenerateRequestSchema,
+  BriefGenerateSuiteSchema,
+  WorkspaceGenerateCompleteSchema,
+  CreateProductSchema,
+  AddProblemSchema,
+  AddPersonaSchema,
+  AddDocSchema,
+  CreateSprintStorySchema,
+  UpdateStorySchema,
+  RevertStorySchema,
+  BulkStoriesUpdateSchema,
+  ApproveArtifactSchema,
+  AddRevisionSchema,
+  AdvanceSprintStorySchema,
+  AddActivitySchema,
+  RunTestSchema,
+  SimulateScenarioSchema
+} from './src/server/requestSchemas.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,11 +103,8 @@ async function startServer() {
   });
 
   // Create new product
-  app.post('/api/products', (req, res) => {
+  app.post('/api/products', validateBody(CreateProductSchema), (req, res) => {
     const { name, vision, description, targetAudience, industry } = req.body;
-    if (!name || !vision) {
-      return res.status(400).json({ error: 'Name and vision are required' });
-    }
     const newProduct = {
       id: `prod_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       name,
@@ -102,9 +119,8 @@ async function startServer() {
   });
 
   // Add problem to product
-  app.post('/api/products/:id/problems', (req, res) => {
+  app.post('/api/products/:id/problems', validateBody(AddProblemSchema), (req, res) => {
     const { title, description, impactScore, frequency } = req.body;
-    if (!title) return res.status(400).json({ error: 'Title required' });
     const problem = {
       id: `prob_${Date.now()}`,
       productId: req.params.id,
@@ -118,9 +134,8 @@ async function startServer() {
   });
 
   // Add persona to product
-  app.post('/api/products/:id/personas', (req, res) => {
+  app.post('/api/products/:id/personas', validateBody(AddPersonaSchema), (req, res) => {
     const { name, role, goal, painPoint } = req.body;
-    if (!name || !role) return res.status(400).json({ error: 'Name and role required' });
     const persona = {
       id: `pers_${Date.now()}`,
       productId: req.params.id,
@@ -134,9 +149,8 @@ async function startServer() {
   });
 
   // Add research doc to product
-  app.post('/api/products/:id/docs', (req, res) => {
+  app.post('/api/products/:id/docs', validateBody(AddDocSchema), (req, res) => {
     const { title, type, content, isUntrusted } = req.body;
-    if (!title || !content) return res.status(400).json({ error: 'Title and content required' });
     const doc = {
       id: `doc_${Date.now()}`,
       productId: req.params.id,
@@ -174,7 +188,7 @@ async function startServer() {
   });
 
   // 5. Standard Generation API
-  app.post('/api/generate', async (req, res) => {
+  app.post('/api/generate', validateBody(GenerateRequestSchema), async (req, res) => {
     try {
       const {
         requestId,
@@ -186,12 +200,6 @@ async function startServer() {
         simulateMalformedFirstPass,
         simulateTimeout
       } = req.body;
-
-      if (!requestId || !productId || !taskType || !userRequest) {
-        return res.status(400).json({
-          error: 'requestId, productId, taskType, and userRequest are required'
-        });
-      }
 
       const result = await runGenerationPipeline({
         requestId,
@@ -215,7 +223,7 @@ async function startServer() {
   });
 
   // 6. Real-Time SSE Streaming Generation API
-  app.post('/api/generate/stream', async (req, res) => {
+  app.post('/api/generate/stream', validateBody(GenerateRequestSchema), async (req, res) => {
     const {
       requestId,
       productId,
@@ -226,12 +234,6 @@ async function startServer() {
       simulateMalformedFirstPass,
       simulateTimeout
     } = req.body;
-
-    if (!requestId || !productId || !taskType || !userRequest) {
-      return res.status(400).json({
-        error: 'requestId, productId, taskType, and userRequest are required'
-      });
-    }
 
     // Set headers for Server-Sent Events
     res.setHeader('Content-Type', 'text/event-stream');
@@ -295,7 +297,7 @@ async function startServer() {
     'GTM_PLAN'
   ];
 
-  app.post('/api/brief/generate-suite', async (req, res) => {
+  app.post('/api/brief/generate-suite', validateBody(BriefGenerateSuiteSchema), async (req, res) => {
     try {
       const { brief, selectedArtifacts } = req.body;
       const title = brief.title || brief.productName;
@@ -303,10 +305,6 @@ async function startServer() {
       const targetAudience = brief.targetAudience || 'Target Customer Segment';
       const proposedSolution = brief.proposedSolution || brief.keyFeaturesOrIdeas || 'Automated structured workflow';
       const strategicGoals = brief.strategicGoals || brief.strategicContext || `Turn strategy into structured artifacts in seconds for ${title}`;
-
-      if (!brief || !title || !problemStatement) {
-        return res.status(400).json({ error: 'Product brief with productName/title and problemStatement is required.' });
-      }
 
       // 1. Find or provision product in workspace
       let product = brief.productId ? db.getProduct(brief.productId) : null;
@@ -413,17 +411,13 @@ Industry: ${brief.industry || 'Technology / Enterprise SaaS'}`;
   });
 
   // SSE Streaming for Suite Generation
-  app.post('/api/brief/generate-suite/stream', async (req, res) => {
+  app.post('/api/brief/generate-suite/stream', validateBody(BriefGenerateSuiteSchema), async (req, res) => {
     const { brief, selectedArtifacts } = req.body;
     const title = brief?.title || brief?.productName;
     const problemStatement = brief?.problemStatement;
     const targetAudience = brief?.targetAudience || 'Target Customer Segment';
     const proposedSolution = brief?.proposedSolution || brief?.keyFeaturesOrIdeas || 'Standard automated workflow';
     const strategicGoals = brief?.strategicGoals || brief?.strategicContext || `Turn strategy into structured artifacts in seconds for ${title}`;
-
-    if (!brief || !title || !problemStatement) {
-      return res.status(400).json({ error: 'Product brief with productName/title and problemStatement is required.' });
-    }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -551,7 +545,7 @@ Industry: ${brief.industry || 'Technology / Enterprise SaaS'}`;
   // 6c. COMPLETE PRODUCT WORKSPACE GENERATION ENGINE
   // High-performance batch creation of product, problem statements, personas, research,
   // 19 artifacts suite, active sprint backlog, and real-time live pulse stream.
-  app.post('/api/workspace/generate-complete', async (req, res) => {
+  app.post('/api/workspace/generate-complete', validateBody(WorkspaceGenerateCompleteSchema), async (req, res) => {
     try {
       const {
         name,
@@ -564,10 +558,6 @@ Industry: ${brief.industry || 'Technology / Enterprise SaaS'}`;
         strategicGoals,
         selectedArtifacts
       } = req.body;
-
-      if (!name || !problemStatement) {
-        return res.status(400).json({ error: 'Product name and problem statement are required to generate a workspace.' });
-      }
 
       const cleanSlug = name.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 15);
       const productId = `prod_${Date.now()}_${cleanSlug}`;
@@ -839,7 +829,7 @@ Strategic Goals: ${strategicGoals || product.vision}`;
   });
 
   // 6d. Real-Time Streaming for Complete Workspace Generation
-  app.post('/api/workspace/generate-complete/stream', async (req, res) => {
+  app.post('/api/workspace/generate-complete/stream', validateBody(WorkspaceGenerateCompleteSchema), async (req, res) => {
     const {
       name,
       vision,
@@ -851,10 +841,6 @@ Strategic Goals: ${strategicGoals || product.vision}`;
       strategicGoals,
       selectedArtifacts
     } = req.body;
-
-    if (!name || !problemStatement) {
-      return res.status(400).json({ error: 'Product name and problem statement are required.' });
-    }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -1093,11 +1079,8 @@ Strategic Goals: ${strategicGoals || product.vision}`;
   });
 
   // Advance or modify a Sprint Story status
-  app.post('/api/workspace/:id/sprint-story', (req, res) => {
+  app.post('/api/workspace/:id/sprint-story', validateBody(AdvanceSprintStorySchema), (req, res) => {
     const { storyId, status } = req.body;
-    if (!storyId || !status) {
-      return res.status(400).json({ error: 'storyId and status are required' });
-    }
 
     const updated = db.updateSprintStoryStatus(storyId, status);
     if (!updated) {
@@ -1112,11 +1095,8 @@ Strategic Goals: ${strategicGoals || product.vision}`;
   });
 
   // Post a manual team note or stakeholder comment
-  app.post('/api/workspace/:id/activity', (req, res) => {
+  app.post('/api/workspace/:id/activity', validateBody(AddActivitySchema), (req, res) => {
     const { title, description, type, authorName, authorRole } = req.body;
-    if (!title) {
-      return res.status(400).json({ error: 'title is required' });
-    }
 
     const activity = db.addWorkspaceActivity({
       productId: req.params.id,
@@ -1193,7 +1173,7 @@ Strategic Goals: ${strategicGoals || product.vision}`;
   });
 
   // 7. Approval Gate API (§7)
-  app.post('/api/artifacts/:id/approve', (req, res) => {
+  app.post('/api/artifacts/:id/approve', validateBody(ApproveArtifactSchema), (req, res) => {
     const { userId } = req.body;
     const result = approveArtifact(req.params.id, userId || 'senior_pm');
     if (!result.success) {
@@ -1202,9 +1182,80 @@ Strategic Goals: ${strategicGoals || product.vision}`;
     res.json(result);
   });
 
-  // 8. Interactive Story RICE Recalculator API
-  app.patch('/api/artifacts/:id/stories/:storyId', (req, res) => {
-    const { reach, impact, confidence, effort } = req.body;
+  // 8. Interactive Story RICE Recalculator & Story Mutation API
+  app.patch('/api/artifacts/:id/stories/:storyId', validateBody(UpdateStorySchema), (req, res) => {
+    const { reach, impact, confidence, effort, storyData, asA, iWant, soThat, acceptanceCriteria, status, priority, changeSummary, author } = req.body;
+    
+    // Check if this is a full story update or partial statement update
+    if (storyData || asA || iWant || soThat || acceptanceCriteria || status || priority) {
+      const artifact = db.getArtifact(req.params.id);
+      if (!artifact) return res.status(404).json({ error: 'Artifact not found' });
+      if (!artifact.schemaData?.stories) return res.status(400).json({ error: 'No stories in artifact' });
+
+      const story = artifact.schemaData.stories.find((s: any) => s.id === req.params.storyId);
+      if (!story) return res.status(404).json({ error: 'Story not found' });
+
+      const prevVersion = story.version || (story.history ? story.history.length : 1);
+      const nextVersion = prevVersion + 1;
+      const nowIso = new Date().toISOString();
+
+      if (storyData) {
+        Object.assign(story, storyData);
+      } else {
+        if (asA !== undefined) story.asA = asA;
+        if (iWant !== undefined) story.iWant = iWant;
+        if (soThat !== undefined) story.soThat = soThat;
+        if (acceptanceCriteria !== undefined) story.acceptanceCriteria = acceptanceCriteria;
+        if (status !== undefined) story.status = status;
+        if (priority !== undefined) story.priority = priority;
+        if (reach !== undefined) story.reach = Number(reach);
+        if (impact !== undefined) story.impact = Number(impact);
+        if (confidence !== undefined) story.confidence = Number(confidence);
+        if (effort !== undefined) story.effort = Number(effort);
+      }
+
+      story.version = nextVersion;
+      if (!story.history) story.history = [];
+
+      const changedFields = Object.keys(req.body).filter(k => k !== 'changeSummary' && k !== 'author');
+
+      story.history.push({
+        version: nextVersion,
+        timestamp: nowIso,
+        author: author || 'Lead Product Manager',
+        changeSummary: changeSummary || `Updated story specification (v${nextVersion})`,
+        fieldsChanged: changedFields.length ? changedFields : ['story_update'],
+        snapshot: {
+          asA: story.asA,
+          iWant: story.iWant,
+          soThat: story.soThat,
+          acceptanceCriteria: story.acceptanceCriteria ? [...story.acceptanceCriteria] : [],
+          priority: story.priority,
+          status: story.status,
+          approvalStatus: story.approvalStatus,
+          reach: story.reach,
+          impact: story.impact,
+          confidence: story.confidence,
+          effort: story.effort,
+          riceScore: story.riceScore,
+          estimationJustification: story.estimationJustification,
+          epicTitle: story.epicTitle,
+          persona: story.persona
+        }
+      });
+
+      db.saveArtifact(artifact);
+      db.addAuditLog({
+        artifactId: artifact.id,
+        taskType: artifact.taskType,
+        action: 'MODIFIED',
+        userId: author || 'lead_pm',
+        details: `Updated user story ${story.id} to v${nextVersion}: ${changeSummary || 'specification changes'}`
+      });
+
+      return res.json({ success: true, story, artifact });
+    }
+
     const result = updateStoryRICE(req.params.id, req.params.storyId, {
       reach: reach !== undefined ? Number(reach) : undefined,
       impact: impact !== undefined ? Number(impact) : undefined,
@@ -1216,6 +1267,67 @@ Strategic Goals: ${strategicGoals || product.vision}`;
       return res.status(400).json(result);
     }
     res.json(result);
+  });
+
+  // 8c. Revert User Story to a Specific Version / Iteration
+  app.post('/api/artifacts/:id/stories/:storyId/revert', (req, res) => {
+    const { targetVersion, userId } = req.body;
+    const artifact = db.getArtifact(req.params.id);
+    if (!artifact) return res.status(404).json({ error: 'Artifact not found' });
+    if (!artifact.schemaData?.stories) return res.status(400).json({ error: 'No stories in artifact' });
+
+    const story = artifact.schemaData.stories.find((s: any) => s.id === req.params.storyId);
+    if (!story) return res.status(404).json({ error: 'Story not found' });
+
+    const history = story.history || [];
+    const targetRev = history.find((h: any) => h.version === Number(targetVersion));
+    if (!targetRev || !targetRev.snapshot) {
+      return res.status(400).json({ error: `Version ${targetVersion} not found in story history` });
+    }
+
+    const currentVersion = story.version || history.length || 1;
+    const nextVersion = currentVersion + 1;
+    const nowIso = new Date().toISOString();
+
+    // Revert story fields to target snapshot
+    const snap = targetRev.snapshot;
+    if (snap.asA !== undefined) story.asA = snap.asA;
+    if (snap.iWant !== undefined) story.iWant = snap.iWant;
+    if (snap.soThat !== undefined) story.soThat = snap.soThat;
+    if (snap.acceptanceCriteria !== undefined) story.acceptanceCriteria = [...snap.acceptanceCriteria];
+    if (snap.priority !== undefined) story.priority = snap.priority;
+    if (snap.status !== undefined) story.status = snap.status;
+    if (snap.approvalStatus !== undefined) story.approvalStatus = snap.approvalStatus;
+    if (snap.reach !== undefined) story.reach = snap.reach;
+    if (snap.impact !== undefined) story.impact = snap.impact;
+    if (snap.confidence !== undefined) story.confidence = snap.confidence;
+    if (snap.effort !== undefined) story.effort = snap.effort;
+    if (snap.riceScore !== undefined) story.riceScore = snap.riceScore;
+    if (snap.estimationJustification !== undefined) story.estimationJustification = snap.estimationJustification;
+
+    story.version = nextVersion;
+
+    const newRev = {
+      version: nextVersion,
+      timestamp: nowIso,
+      author: userId || 'Lead Product Manager',
+      changeSummary: `Reverted to v${targetVersion} (${targetRev.changeSummary || 'previous iteration'})`,
+      fieldsChanged: ['reverted_to_v' + targetVersion],
+      snapshot: { ...snap }
+    };
+
+    story.history = [...history, newRev];
+
+    db.saveArtifact(artifact);
+    db.addAuditLog({
+      artifactId: artifact.id,
+      taskType: artifact.taskType,
+      action: 'MODIFIED',
+      userId: userId || 'lead_pm',
+      details: `Reverted user story ${story.id} to version ${targetVersion} (now v${nextVersion})`
+    });
+
+    res.json({ success: true, story, artifact, revertedTo: targetVersion, newVersion: nextVersion });
   });
 
   // 8b. Bulk Update Stories Status, Priority, and Confidence
@@ -1261,11 +1373,22 @@ Strategic Goals: ${strategicGoals || product.vision}`;
       return res.status(400).json({ error: 'storyIds array or updates array is required' });
     }
 
+    const isApprovalGate = req.body.action === 'APPROVE' || status === 'APPROVED' || req.body.isApprovalGate === true;
+
     if (artifact.schemaData?.stories) {
       artifact.schemaData.stories = artifact.schemaData.stories.map((s: any) => {
         if (storyIds.includes(s.id)) {
           const updated: any = { ...s };
-          if (status !== undefined) updated.status = status;
+          if (isApprovalGate) {
+            updated.approvalStatus = 'APPROVED';
+            updated.approvedAt = new Date().toISOString();
+            updated.approvedBy = req.body.userId || 'Lead Product Manager';
+            if (updated.status === 'BACKLOG' || !updated.status) {
+              updated.status = 'READY_FOR_DEV';
+            }
+          } else if (status !== undefined) {
+            updated.status = status;
+          }
           if (priority !== undefined) {
             updated.priority = priority;
             if (priority === 'P0') updated.riceScore = Math.max(updated.riceScore || 0, 3200);
@@ -1278,17 +1401,25 @@ Strategic Goals: ${strategicGoals || product.vision}`;
         return s;
       });
 
+      // Check if all stories are approved to promote official artifact status
+      const allApproved = artifact.schemaData.stories.every((st: any) => st.approvalStatus === 'APPROVED');
+      if (allApproved || (isApprovalGate && storyIds.length >= artifact.schemaData.stories.length)) {
+        artifact.status = 'APPROVED';
+      }
+
       db.saveArtifact(artifact);
       db.addAuditLog({
         artifactId: artifact.id,
         taskType: artifact.taskType,
-        action: 'MODIFIED',
-        userId: 'lead_pm',
-        details: `Bulk updated ${storyIds.length} stories: ${status ? `status=${status} ` : ''}${priority ? `priority=${priority}` : ''}`
+        action: isApprovalGate ? 'APPROVED' : 'MODIFIED',
+        userId: req.body.userId || 'lead_pm',
+        details: isApprovalGate 
+          ? `Bulk promoted ${storyIds.length} user stories via Human PM Approval Gate`
+          : `Bulk updated ${storyIds.length} stories: ${status ? `status=${status} ` : ''}${priority ? `priority=${priority}` : ''}`
       });
     }
 
-    res.json({ success: true, updatedCount: storyIds.length, artifact });
+    res.json({ success: true, updatedCount: storyIds.length, artifact, isApprovalGate });
   });
 
   // 9. Get Artifact Details
@@ -1422,6 +1553,7 @@ Strategic Goals: ${strategicGoals || product.vision}`;
     try {
       const { testId } = req.body;
       if (testId === 'ALL') {
+        db.tokenBudgetUsed = 4200;
         const testIds = [
           'test_1_rich_data',
           'test_2_empty_product',

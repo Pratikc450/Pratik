@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getGeminiClient } from './geminiClient.js';
+import { getGeminiClient, isGeminiQuotaExhausted, handleGeminiError } from './geminiClient.js';
 import { Modality } from '@google/genai';
 import { ChatRolePreset } from '../types.js';
 import { db } from './mockDb.js';
@@ -79,7 +79,7 @@ aiRouter.post('/chat', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    console.warn(`[Chat Warning] Upstream model ${targetModel} issue:`, err.message || err);
+    handleGeminiError('Chat', err);
     // Intelligent Domain Fallback if upstream rate-limited
     const fallbackReply = `[${rolePreset} Response via Domain Engine]: Regarding "${message}":\n\n1. **Strategic Assessment**: Prioritize features with high Reach and high Confidence first to reduce market risk.\n2. **Actionable Recommendation**: Formulate the core requirement into a testable hypothesis with quantitative guardrails.\n3. **Next Step**: You can convert this directly into an approved PRD or User Story in the Workbench.`;
     
@@ -175,7 +175,7 @@ Format clearly with sections:
       createdAt: new Date().toISOString()
     });
   } catch (err: any) {
-    console.warn('[Transcription Warning] Fallback triggered:', err.message || err);
+    handleGeminiError('Transcription', err);
     res.json({
       id: `transcript_${Date.now()}`,
       text: `### Verbatim Transcript\n"Hi everyone, thanks for taking the time to test our trade credit underwriting workflow. Our biggest operational bottleneck right now is verifying vendor invoices—it takes us almost three business days of back-and-forth emails. If we had an automated risk scoring badge right inside the vendor portal, we could approve 80% of routine credit lines instantly."\n\n### Key Pain Points\n- Multi-day manual verification cycles stall customer onboarding\n- High reliance on disjointed email threads for document collection\n\n### Feature Opportunities\n- Instant automated credit risk scoring badge\n- Self-serve vendor document verification portal`,
@@ -274,7 +274,7 @@ aiRouter.post('/generate-image', async (req, res) => {
       createdAt: new Date().toISOString()
     });
   } catch (err: any) {
-    console.warn('[Image Generation Warning] Fallback triggered:', err.message || err);
+    handleGeminiError('Image Generation', err);
     // Create an elegant SVG placeholder mockup encoded as data URL
     const svgMockup = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="#0b0f19">
       <defs>
@@ -383,7 +383,7 @@ aiRouter.post('/generate-video', async (req, res) => {
       createdAt: new Date().toISOString()
     });
   } catch (err: any) {
-    console.warn('[Veo Video Warning] Falling back to interactive demo animation:', err.message || err);
+    handleGeminiError('Veo Video', err);
     res.json({
       id: `vid_${Date.now()}`,
       prompt: prompt || 'Product UI Feature Animation',
@@ -451,7 +451,7 @@ Format in clean Markdown with clear headings.`,
       ]
     });
   } catch (err: any) {
-    console.warn('[Search Grounding Warning] Fallback triggered:', err.message || err);
+    handleGeminiError('Search Grounding', err);
     res.json({
       query,
       summaryMarkdown: `## Market Intelligence Report: ${query}
@@ -540,7 +540,7 @@ aiRouter.post('/maps-grounding', async (req, res) => {
       locationContext: latitude && longitude ? `${latitude}, ${longitude}` : 'Global'
     });
   } catch (err: any) {
-    console.warn('[Maps Grounding Warning] Fallback triggered:', err.message || err);
+    handleGeminiError('Maps Grounding', err);
     res.json({
       query,
       summaryMarkdown: `### Regional Footprint & Logistics Analysis: ${query}\n\nKey regional distribution hubs and commercial logistics corridors identified for geographic expansion planning. Proximity to major transport freight lines and multi-tenant fulfillment centers ensures sub-48 hour fulfillment SLAs.`,
@@ -634,7 +634,7 @@ aiRouter.post('/generate-music', async (req, res) => {
       createdAt: new Date().toISOString()
     });
   } catch (err: any) {
-    console.warn('[Music Generation Warning] Generating synthetic audio fallback:', err.message || err);
+    handleGeminiError('Music Generation', err);
     // Create a synthesized PCM WAV tone/arpeggio so audio playback always works smoothly
     const sampleRate = 22050;
     const duration = Math.min(Math.max(durationSeconds || 10, 5), 15);
@@ -682,7 +682,9 @@ aiRouter.post('/generate-music', async (req, res) => {
 
 // 8. AI QUICK AUTO-FILL RICE SCORES FOR USER STORIES
 aiRouter.post('/suggest-rice', async (req, res) => {
-  const { story, productName, productContext } = req.body;
+  const story = req.body.story || req.body;
+  const productName = req.body.productName || (req.body.story && req.body.story.productName);
+  const productContext = req.body.productContext || (req.body.story && req.body.story.productContext);
 
   if (!story || (!story.asA && !story.iWant && !story.title && !story.description)) {
     return res.status(400).json({ error: 'Valid user story details (asA, iWant, or description) are required.' });
@@ -855,7 +857,7 @@ Suggest optimal baseline RICE metrics and concise justification for the PM.`;
       }
     });
   } catch (err: any) {
-    console.warn('[AI Suggest RICE Warning] Falling back to contextual heuristic:', err.message || err);
+    handleGeminiError('AI Suggest RICE', err);
     const fallback = getHeuristicBaseline();
     res.json({
       success: true,
@@ -1067,7 +1069,7 @@ Identify dependencies, semantic clusters, high-impact gaps, and recommended Next
       data: parsed
     });
   } catch (err: any) {
-    console.warn('[AI Story Recommendations Warning] Falling back to heuristic engine:', err.message || err);
+    handleGeminiError('AI Story Recommendations', err);
     res.json({
       success: true,
       model: 'heuristic-engine-v1',
@@ -1212,7 +1214,7 @@ Group these stories into strategic product Epics based on their narrative intent
       data: parsed
     });
   } catch (err: any) {
-    console.warn('[AI Epic Mapping Warning] Falling back to heuristic engine:', err.message || err);
+    handleGeminiError('AI Epic Mapping', err);
     res.json({
       success: true,
       model: 'heuristic-engine-v1',
@@ -1691,6 +1693,18 @@ Respond with JSON conforming strictly to this format:
   ]
 }`;
 
+    if (isGeminiQuotaExhausted()) {
+      return res.json({
+        success: true,
+        model: 'deterministic-e2e-engine-v1',
+        productName: product.name,
+        productId: product.id,
+        storyCount: stories.length,
+        data: getHeuristicScenarios(),
+        fallbackUsed: true
+      });
+    }
+
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: [{ role: 'user', parts: [{ text: promptText }] }],
@@ -1718,7 +1732,7 @@ Respond with JSON conforming strictly to this format:
       data: parsed
     });
   } catch (err: any) {
-    console.warn('[AI E2E Scenario Generator] Fallback engaged:', err.message || err);
+    handleGeminiError('AI E2E Scenario Generator', err);
     res.json({
       success: true,
       model: 'deterministic-e2e-engine-v1',

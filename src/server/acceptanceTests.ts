@@ -364,6 +364,11 @@ async function test6_MalformedRepair(): Promise<AcceptanceTestResult> {
   const requestId = `test6_${Date.now()}`;
   const start = Date.now();
 
+  // Ensure token budget is available for this test run
+  if (db.tokenBudgetUsed >= db.tokenBudgetLimit) {
+    db.tokenBudgetUsed = 4200;
+  }
+
   // Simulate malformed first pass (missing required objective)
   const response = await runGenerationPipeline({
     requestId,

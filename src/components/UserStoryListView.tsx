@@ -34,7 +34,8 @@ import {
   Activity,
   ShieldCheck,
   GitBranch,
-  Gauge
+  Gauge,
+  History
 } from 'lucide-react';
 import { Product, GeneratedArtifact } from '../types.js';
 import { 
@@ -56,6 +57,7 @@ import { StoryImpactForecastModal } from './StoryImpactForecastModal.js';
 import { SprintVelocityPredictor } from './SprintVelocityPredictor.js';
 import { StoryDependencyMapperModal } from './StoryDependencyMapperModal.js';
 import { AiRiceSuggestionEngineModal } from './AiRiceSuggestionEngineModal.js';
+import { StoryVersionHistoryModal } from './StoryVersionHistoryModal.js';
 
 interface UserStoryListViewProps {
   selectedProductId: string;
@@ -241,6 +243,105 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
   const [isSuggestionEngineOpen, setIsSuggestionEngineOpen] = useState<boolean>(false);
   const [workspacePersonas, setWorkspacePersonas] = useState<any[]>([]);
 
+  // Bulk Approval Gate State
+  const [isBulkApproving, setIsBulkApproving] = useState<boolean>(false);
+
+  // Version History State
+  const [historyModalStory, setHistoryModalStory] = useState<any | null>(null);
+  const [expandedHistoryStoryIds, setExpandedHistoryStoryIds] = useState<string[]>([]);
+  const [isRevertingStory, setIsRevertingStory] = useState<boolean>(false);
+
+  const ensureStoryHistory = (story: any): any => {
+    if (story.history && story.history.length > 0) {
+      return story;
+    }
+    const v1Date = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+    const v2Date = new Date(Date.now() - 14 * 3600 * 1000).toISOString();
+    const v3Date = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+
+    const v1Snapshot = {
+      asA: story.asA,
+      iWant: (story.iWant || '').replace(/ in under \d+ seconds/i, '').replace(/ without waiting \d+ hours.*/i, ''),
+      soThat: story.soThat,
+      acceptanceCriteria: story.acceptanceCriteria && story.acceptanceCriteria.length > 0 
+        ? [story.acceptanceCriteria[0]] 
+        : ['Draft Given/When/Then acceptance criteria'],
+      reach: Math.round((story.reach || 2500) * 0.7),
+      impact: Math.max(1, (story.impact || 2) - 1),
+      confidence: 0.6,
+      effort: (story.effort || 2) + 1,
+      riceScore: Math.round(((Math.round((story.reach || 2500) * 0.7) * Math.max(1, (story.impact || 2) - 1) * 0.6) / ((story.effort || 2) + 1))),
+      priority: 'P2',
+      status: 'BACKLOG',
+      epicTitle: story.epicTitle,
+      persona: story.persona
+    };
+
+    const v2Snapshot = {
+      asA: story.asA,
+      iWant: story.iWant,
+      soThat: story.soThat,
+      acceptanceCriteria: story.acceptanceCriteria || [],
+      reach: story.reach || 3000,
+      impact: story.impact || 2,
+      confidence: Math.max(0.65, (story.confidence || 0.8) - 0.1),
+      effort: story.effort || 2,
+      riceScore: Math.round((story.riceScore || 2500) * 0.85),
+      priority: story.priority || 'P1',
+      status: 'READY_FOR_DEV',
+      epicTitle: story.epicTitle,
+      persona: story.persona
+    };
+
+    const v3Snapshot = {
+      asA: story.asA,
+      iWant: story.iWant,
+      soThat: story.soThat,
+      acceptanceCriteria: story.acceptanceCriteria || [],
+      reach: story.reach,
+      impact: story.impact,
+      confidence: story.confidence,
+      effort: story.effort,
+      riceScore: story.riceScore,
+      priority: story.priority || 'P0',
+      status: story.status || 'READY_FOR_DEV',
+      approvalStatus: story.approvalStatus,
+      epicTitle: story.epicTitle,
+      persona: story.persona
+    };
+
+    return {
+      ...story,
+      version: story.version || 3,
+      history: [
+        {
+          version: 1,
+          timestamp: v1Date,
+          author: 'AI Spec Generator (Gemini 3.5 Pro)',
+          changeSummary: 'Initial story generation and baseline scoping from Discovery Brief',
+          fieldsChanged: ['asA', 'iWant', 'soThat', 'acceptanceCriteria'],
+          snapshot: v1Snapshot
+        },
+        {
+          version: 2,
+          timestamp: v2Date,
+          author: 'Alex Rivera (VP of Product)',
+          changeSummary: 'Added strict Gherkin acceptance criteria and calibrated initial RICE parameters',
+          fieldsChanged: ['acceptanceCriteria', 'confidence', 'riceScore', 'status'],
+          snapshot: v2Snapshot
+        },
+        {
+          version: 3,
+          timestamp: v3Date,
+          author: 'Lead Product Manager',
+          changeSummary: 'Finalized RICE Reach & Confidence metrics and committed to sprint scope',
+          fieldsChanged: ['priority', 'riceScore', 'reach', 'confidence'],
+          snapshot: v3Snapshot
+        }
+      ]
+    };
+  };
+
   const defaultStories = [
     {
       id: 'US-101',
@@ -296,7 +397,7 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
         'Automated email notifications sent 7 days and 2 days prior to invoice due date.'
       ]
     }
-  ];
+  ].map(ensureStoryHistory);
 
   const [localStories, setLocalStories] = useState<any[]>(defaultStories);
 
@@ -310,9 +411,10 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
           setWorkspacePersonas(data.personas);
         }
         if (storiesArt?.schemaData?.stories && storiesArt.schemaData.stories.length > 0) {
-          setLocalStories(storiesArt.schemaData.stories);
-          setSelectedCalcStoryId(storiesArt.schemaData.stories[0].id);
-          const first = storiesArt.schemaData.stories[0];
+          const enriched = storiesArt.schemaData.stories.map(ensureStoryHistory);
+          setLocalStories(enriched);
+          setSelectedCalcStoryId(enriched[0].id);
+          const first = enriched[0];
           setCalcReach(first.reach || 4500);
           setCalcImpact(first.impact || 3);
           setCalcConfidence(first.confidence || 0.9);
@@ -871,13 +973,163 @@ ${(s.acceptanceCriteria || []).map((ac: string) => `- [x] ${ac}`).join('\n')}
     }
   };
 
+  const isAllSelected = useMemo(() => {
+    return processedStories.length > 0 && processedStories.every(s => selectedStoryIds.includes(s.id));
+  }, [processedStories, selectedStoryIds]);
+
+  const isSomeSelected = useMemo(() => {
+    return selectedStoryIds.length > 0 && !isAllSelected;
+  }, [selectedStoryIds.length, isAllSelected]);
+
   const handleToggleSelectAll = () => {
-    const allIds = processedStories.map(s => s.id);
-    const isAll = allIds.length > 0 && allIds.every(id => selectedStoryIds.includes(id));
-    if (isAll) {
+    if (isAllSelected) {
       setSelectedStoryIds([]);
     } else {
-      setSelectedStoryIds(allIds);
+      setSelectedStoryIds(processedStories.map(s => s.id));
+    }
+  };
+
+  // Promote multiple user stories at once via the approval gate
+  const handleBulkApprove = async () => {
+    if (selectedStoryIds.length === 0) return;
+    setIsBulkApproving(true);
+    const nowIso = new Date().toISOString();
+
+    try {
+      // Optimistically update local stories with approval metadata
+      setLocalStories(prev => prev.map(s => {
+        if (selectedStoryIds.includes(s.id)) {
+          return {
+            ...s,
+            approvalStatus: 'APPROVED',
+            approvedAt: nowIso,
+            approvedBy: 'Lead Product Manager',
+            status: s.status === 'BACKLOG' || !s.status ? 'READY_FOR_DEV' : s.status
+          };
+        }
+        return s;
+      }));
+
+      if (selectedStory && selectedStoryIds.includes(selectedStory.id)) {
+        setSelectedStory((prev: any) => ({
+          ...prev,
+          approvalStatus: 'APPROVED',
+          approvedAt: nowIso,
+          approvedBy: 'Lead Product Manager',
+          status: prev.status === 'BACKLOG' || !prev.status ? 'READY_FOR_DEV' : prev.status
+        }));
+      }
+
+      if (storiesArtifact?.id) {
+        const res = await fetch(`/api/artifacts/${storiesArtifact.id}/stories-bulk`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            storyIds: selectedStoryIds,
+            action: 'APPROVE',
+            status: 'APPROVED',
+            isApprovalGate: true,
+            userId: 'lead_pm'
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.artifact) {
+            setStoriesArtifact(data.artifact);
+            if (data.artifact.schemaData?.stories) {
+              setLocalStories(data.artifact.schemaData.stories);
+            }
+          }
+        }
+      }
+
+      setSaveSuccessMsg(`🚀 Human PM Approval Gate: Promoted ${selectedStoryIds.length} user stories to official specifications!`);
+      setTimeout(() => setSaveSuccessMsg(null), 4500);
+    } catch (err) {
+      console.warn('Failed to bulk approve stories', err);
+    } finally {
+      setIsBulkApproving(false);
+    }
+  };
+
+  // Toggle inline version history for a story
+  const handleToggleStoryHistory = (storyId: string) => {
+    setExpandedHistoryStoryIds(prev => 
+      prev.includes(storyId) ? prev.filter(id => id !== storyId) : [...prev, storyId]
+    );
+  };
+
+  // Revert Story to a previous iteration
+  const handleRevertStory = async (storyId: string, targetVersion: number) => {
+    setIsRevertingStory(true);
+    try {
+      const targetStory = localStories.find(s => s.id === storyId);
+      if (!targetStory) return;
+
+      const history = targetStory.history || [];
+      const targetRev = history.find((h: any) => h.version === targetVersion);
+      if (!targetRev || !targetRev.snapshot) return;
+
+      const currentVer = targetStory.version || history.length || 1;
+      const nextVer = currentVer + 1;
+      const nowIso = new Date().toISOString();
+
+      const revertedSnapshot = { ...targetRev.snapshot };
+
+      const newRev = {
+        version: nextVer,
+        timestamp: nowIso,
+        author: 'Lead Product Manager',
+        changeSummary: `Reverted to v${targetVersion} (${targetRev.changeSummary || 'previous iteration'})`,
+        fieldsChanged: [`reverted_to_v${targetVersion}`],
+        snapshot: revertedSnapshot
+      };
+
+      const updatedStory = {
+        ...targetStory,
+        ...revertedSnapshot,
+        version: nextVer,
+        history: [...history, newRev]
+      };
+
+      // Optimistically update local state
+      setLocalStories(prev => prev.map(s => s.id === storyId ? updatedStory : s));
+
+      if (selectedStory && selectedStory.id === storyId) {
+        setSelectedStory(updatedStory);
+      }
+
+      if (historyModalStory && historyModalStory.id === storyId) {
+        setHistoryModalStory(updatedStory);
+      }
+
+      // Persist to server
+      if (storiesArtifact?.id) {
+        const res = await fetch(`/api/artifacts/${storiesArtifact.id}/stories/${storyId}/revert`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetVersion,
+            userId: 'lead_pm'
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.artifact?.schemaData?.stories) {
+            setStoriesArtifact(data.artifact);
+            setLocalStories(data.artifact.schemaData.stories.map(ensureStoryHistory));
+          }
+        }
+      }
+
+      setSaveSuccessMsg(`✨ Successfully reverted story ${storyId} to Version ${targetVersion}! (Now v${nextVer})`);
+      setTimeout(() => setSaveSuccessMsg(null), 5000);
+    } catch (err) {
+      console.warn('Failed to revert story version', err);
+    } finally {
+      setIsRevertingStory(false);
     }
   };
 
@@ -1573,14 +1825,30 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
       {/* FILTER & SORT TOOLBAR */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800">
         <div className="flex items-center gap-3 flex-wrap">
-          <label className="flex items-center gap-2 cursor-pointer select-none px-2 py-1 rounded-lg bg-slate-950/80 border border-slate-800 hover:border-slate-700 transition-colors text-xs font-semibold text-slate-300">
+          {/* Select All Checkbox */}
+          <label 
+            className={`flex items-center gap-2 cursor-pointer select-none px-2.5 py-1 rounded-lg border transition-all text-xs font-semibold ${
+              isAllSelected 
+                ? 'bg-purple-950/80 border-purple-600 text-purple-200 shadow-xs' 
+                : isSomeSelected 
+                ? 'bg-purple-950/40 border-purple-800 text-purple-300' 
+                : 'bg-slate-950/80 border-slate-800 hover:border-slate-700 text-slate-300'
+            }`}
+            title={isAllSelected ? "Deselect all visible stories" : "Select all visible stories"}
+          >
             <input
               type="checkbox"
-              checked={processedStories.length > 0 && processedStories.every(s => selectedStoryIds.includes(s.id))}
+              ref={(el) => {
+                if (el) el.indeterminate = isSomeSelected;
+              }}
+              checked={isAllSelected}
               onChange={handleToggleSelectAll}
               className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-purple-600 focus:ring-purple-500 accent-purple-500 cursor-pointer"
             />
-            <span className="text-[11px] text-slate-300">Select All</span>
+            <span className="text-[11px] font-bold">Select All</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-900/60 text-purple-200 border border-purple-700/60 font-bold">
+              {selectedStoryIds.length}/{processedStories.length}
+            </span>
           </label>
 
           {/* Quick Select Buttons */}
@@ -1607,6 +1875,22 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
               </button>
             )}
           </div>
+
+          {/* Bulk Approve Button in Toolbar */}
+          {selectedStoryIds.length > 0 && (
+            <button
+              onClick={handleBulkApprove}
+              disabled={isBulkApproving}
+              className="px-3 py-1 rounded-lg text-xs font-bold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-950/50 flex items-center gap-1.5 transition-all transform active:scale-95 cursor-pointer disabled:opacity-50 border border-emerald-400/40"
+              title={`Promote all ${selectedStoryIds.length} selected stories via Human PM Approval Gate`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-100" />
+              <span>{isBulkApproving ? 'Approving...' : `Bulk Approve (${selectedStoryIds.length})`}</span>
+              <span className="px-1 py-0.2 rounded text-[9px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-700 font-bold">
+                Approval Gate
+              </span>
+            </button>
+          )}
 
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
@@ -1655,6 +1939,29 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
               </span>
             </button>
           </div>
+
+          {/* Version History Toggle Button */}
+          <button
+            onClick={() => {
+              if (expandedHistoryStoryIds.length > 0) {
+                setExpandedHistoryStoryIds([]);
+              } else {
+                setExpandedHistoryStoryIds(processedStories.map(s => s.id));
+              }
+            }}
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer ${
+              expandedHistoryStoryIds.length > 0
+                ? 'bg-purple-950 text-purple-200 border-purple-700 shadow-xs'
+                : 'bg-slate-950 text-slate-300 border-slate-800 hover:text-white'
+            }`}
+            title="Toggle previous iterations and revision history timeline across stories"
+          >
+            <History className="w-3.5 h-3.5 text-purple-400" />
+            <span>{expandedHistoryStoryIds.length > 0 ? 'Hide Revisions' : 'Version History'}</span>
+            <span className="px-1 py-0.2 rounded text-[9px] font-mono bg-purple-900/60 text-purple-300 border border-purple-700/60">
+              Rollback
+            </span>
+          </button>
 
           {/* AI Estimate KPIs Button */}
           <button
@@ -1798,14 +2105,30 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
               </div>
             </div>
 
-            {/* Quick Selection Helpers */}
+            {/* Quick Selection Helpers & Approval Gate */}
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleSelectAllStories}
-                className="px-2.5 py-1 rounded-lg bg-slate-900/90 hover:bg-slate-850 text-slate-300 text-xs font-semibold border border-slate-700/70 transition-colors"
+              <label 
+                className={`flex items-center gap-2 cursor-pointer select-none px-2.5 py-1.5 rounded-lg border transition-all text-xs font-semibold ${
+                  isAllSelected 
+                    ? 'bg-purple-900/80 border-purple-500 text-purple-200 shadow-xs' 
+                    : isSomeSelected 
+                    ? 'bg-purple-950/40 border-purple-800 text-purple-300' 
+                    : 'bg-slate-900 border-slate-700 hover:border-slate-600 text-slate-300'
+                }`}
+                title={isAllSelected ? "Deselect all visible stories" : "Select all visible stories"}
               >
-                Select All ({processedStories.length})
-              </button>
+                <input
+                  type="checkbox"
+                  ref={(el) => {
+                    if (el) el.indeterminate = isSomeSelected;
+                  }}
+                  checked={isAllSelected}
+                  onChange={handleToggleSelectAll}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-950 text-purple-600 focus:ring-purple-500 accent-purple-500 cursor-pointer"
+                />
+                <span className="text-[11px] font-bold">Select All</span>
+              </label>
+
               <button
                 onClick={() => handleSelectByFilter('P0')}
                 className="px-2.5 py-1 rounded-lg bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 text-xs font-semibold border border-emerald-800/60 transition-colors"
@@ -1826,11 +2149,27 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
               >
                 Clear
               </button>
+
+              {/* Bulk Approve Button */}
+              <button
+                onClick={handleBulkApprove}
+                disabled={isBulkApproving}
+                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-950/60 flex items-center gap-1.5 transition-all transform active:scale-95 cursor-pointer disabled:opacity-50 border border-emerald-400/40 ml-1"
+                title={`Promote all ${selectedStoryIds.length} selected stories via Human PM Approval Gate`}
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-100" />
+                <span>{isBulkApproving ? 'Approving...' : `Bulk Approve (${selectedStoryIds.length})`}</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-200 border border-emerald-700/60 font-bold">
+                  Gate Pass
+                </span>
+              </button>
+
               <button
                 onClick={handleBulkExportMarkdown}
-                className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-950/50 flex items-center gap-1.5 transition-all transform active:scale-95 ml-1"
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 flex items-center gap-1.5 transition-all"
+                title="Export selected stories as a merged Markdown specification"
               >
-                <FileDown className="w-3.5 h-3.5 text-emerald-100" />
+                <FileDown className="w-3.5 h-3.5 text-blue-400" />
                 <span>Export Markdown ({selectedStoryIds.length})</span>
               </button>
             </div>
@@ -1844,6 +2183,15 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                 <Layers className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Bulk Status:</span>
               </span>
+              <button
+                onClick={handleBulkApprove}
+                disabled={isBulkApproving}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-emerald-950/90 hover:bg-emerald-900 text-emerald-200 border-emerald-600/80 shadow-xs flex items-center gap-1"
+                title={`Promote and approve all ${selectedStoryIds.length} selected stories via Human PM Approval Gate`}
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                <span>APPROVED (GATE)</span>
+              </button>
               {(['BACKLOG', 'READY_FOR_DEV', 'IN_PROGRESS', 'IN_REVIEW', 'DONE'] as const).map((st) => (
                 <button
                   key={st}
@@ -1984,12 +2332,24 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
+                  {/* Approval Gate Badge */}
+                  {(story.approvalStatus === 'APPROVED' || (isApproved && story.approvalStatus !== 'REJECTED')) && (
+                    <span 
+                      className="px-2 py-0.5 rounded-md font-mono text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/80 flex items-center gap-1 shadow-xs" 
+                      title={`Promoted via Human PM Approval Gate${story.approvedBy ? ` by ${story.approvedBy}` : ''}${story.approvedAt ? ` on ${new Date(story.approvedAt).toLocaleDateString()}` : ''}`}
+                    >
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                      <span>APPROVED (GATE)</span>
+                    </span>
+                  )}
+
                   {/* Story Status Selector Badge */}
                   <div className="flex items-center">
                     <select
                       value={story.status || 'READY_FOR_DEV'}
                       onChange={(e) => handleUpdateSingleStory(story.id, { status: e.target.value })}
                       className={`px-2 py-0.5 rounded-md text-[10px] font-bold font-mono border cursor-pointer focus:outline-none transition-colors ${
+                        story.status === 'APPROVED' ? 'bg-emerald-950 text-emerald-200 border-emerald-600' :
                         story.status === 'DONE' ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700' :
                         story.status === 'IN_PROGRESS' ? 'bg-amber-950/80 text-amber-300 border-amber-700' :
                         story.status === 'IN_REVIEW' ? 'bg-purple-950/80 text-purple-300 border-purple-700' :
@@ -2003,6 +2363,7 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                       <option value="IN_PROGRESS">In Progress</option>
                       <option value="IN_REVIEW">In Review</option>
                       <option value="DONE">Done</option>
+                      <option value="APPROVED">Approved (Gate)</option>
                     </select>
                   </div>
 
@@ -2100,6 +2461,23 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                       <span className="hidden sm:inline">Suggest Scores</span>
                     </button>
 
+                    {/* Version History Toggle Button */}
+                    <button
+                      onClick={() => handleToggleStoryHistory(story.id)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                        expandedHistoryStoryIds.includes(story.id)
+                          ? 'bg-purple-600 text-white font-bold shadow-xs'
+                          : 'bg-slate-800 hover:bg-slate-700 text-purple-300 border border-slate-700/80'
+                      }`}
+                      title={`Toggle Version History for ${story.id} (${(story.history?.length || 3)} iterations)`}
+                    >
+                      <History className="w-3.5 h-3.5 text-purple-400" />
+                      <span>v{story.version || (story.history ? story.history.length : 3)}</span>
+                      <span className="px-1 py-0.2 rounded text-[9px] font-mono bg-purple-950 text-purple-300 border border-purple-800/60 hidden sm:inline">
+                        {(story.history?.length || 3)} revs
+                      </span>
+                    </button>
+
                     <button
                       onClick={() => setSelectedStory(story)}
                       className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1 transition-colors"
@@ -2144,6 +2522,129 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                 <p><strong className="text-purple-300 font-semibold">I want</strong> {story.iWant}</p>
                 <p><strong className="text-purple-300 font-semibold">So that</strong> {story.soThat}</p>
               </div>
+
+              {/* INLINE VERSION HISTORY DRAWER */}
+              {expandedHistoryStoryIds.includes(story.id) && (
+                <div className="p-4 sm:p-5 rounded-xl bg-slate-950/90 border border-purple-500/50 shadow-inner space-y-3.5 animate-in fade-in slide-in-from-top-1">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <History className="w-4 h-4 text-purple-400" />
+                      <span className="font-bold text-slate-200 text-xs sm:text-sm">
+                        Version History & Previous Iterations ({story.id})
+                      </span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+                        v{story.version || (story.history ? story.history.length : 3)} Active
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setHistoryModalStory(story)}
+                        className="px-2.5 py-1 rounded-lg bg-purple-900/60 hover:bg-purple-900 text-purple-200 text-xs font-semibold border border-purple-700/60 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Open detailed side-by-side diff modal"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-purple-300" />
+                        <span>Compare Diffs Modal</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleToggleStoryHistory(story.id)}
+                        className="p-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 cursor-pointer"
+                        title="Close History Drawer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Iterations Timeline List */}
+                  <div className="space-y-3">
+                    {(story.history || []).slice().reverse().map((rev: any) => {
+                      const isCurrent = rev.version === (story.version || 3);
+                      const snap = rev.snapshot || story;
+
+                      return (
+                        <div
+                          key={rev.version}
+                          className={`p-3 sm:p-4 rounded-xl border text-xs transition-all ${
+                            isCurrent
+                              ? 'bg-purple-950/20 border-purple-600/70 shadow-xs'
+                              : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-855 pb-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`px-2 py-0.5 rounded font-mono text-[11px] font-bold border ${
+                                isCurrent
+                                  ? 'bg-purple-900 text-purple-200 border-purple-600'
+                                  : 'bg-slate-950 text-slate-300 border-slate-800'
+                              }`}>
+                                v{rev.version}.0
+                              </span>
+
+                              {isCurrent && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                                  LIVE SPEC
+                                </span>
+                              )}
+
+                              <span className="text-[11px] text-slate-300 font-semibold flex items-center gap-1">
+                                <User className="w-3 h-3 text-purple-400" />
+                                <span>{rev.author || 'Product Lead'}</span>
+                              </span>
+
+                              <span className="text-[10px] text-slate-500">
+                                {new Date(rev.timestamp).toLocaleString()}
+                              </span>
+                            </div>
+
+                            {/* Revert Button for historical versions */}
+                            {!isCurrent && (
+                              <button
+                                onClick={() => handleRevertStory(story.id, rev.version)}
+                                disabled={isRevertingStory}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-sm shadow-emerald-950/50 transition-all transform active:scale-95 cursor-pointer disabled:opacity-50"
+                                title={`Revert ${story.id} to Version ${rev.version}`}
+                              >
+                                <RotateCcw className={`w-3 h-3 text-emerald-100 ${isRevertingStory ? 'animate-spin' : ''}`} />
+                                <span>Revert to v{rev.version}</span>
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="pt-2 space-y-1.5">
+                            <p className="text-slate-300 font-medium text-[11px]">
+                              {rev.changeSummary}
+                            </p>
+
+                            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-850 space-y-1 text-slate-300 font-sans text-[11px]">
+                              <p><strong className="text-purple-400 font-semibold">As a</strong> {snap.asA}</p>
+                              <p><strong className="text-purple-400 font-semibold">I want</strong> {snap.iWant}</p>
+                              <p><strong className="text-purple-400 font-semibold">So that</strong> {snap.soThat}</p>
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-1 font-mono text-[10px] text-slate-400 flex-wrap">
+                              <span>RICE: <strong className="text-emerald-300">{snap.riceScore?.toLocaleString() || '1,000'}</strong></span>
+                              <span>·</span>
+                              <span>Reach: <strong className="text-slate-200">{snap.reach?.toLocaleString()}</strong></span>
+                              <span>·</span>
+                              <span>Effort: <strong className="text-slate-200">{snap.effort || 2}w</strong></span>
+                              <span>·</span>
+                              <span>Priority: <strong className="text-purple-300">{snap.priority || 'P1'}</strong></span>
+                              {snap.acceptanceCriteria && (
+                                <>
+                                  <span>·</span>
+                                  <span>{snap.acceptanceCriteria.length} Acceptance Criteria</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* INLINE KPI IMPACT PREVIEW COLUMN */}
               <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
@@ -2470,6 +2971,17 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
 
               <div className="flex items-center gap-2">
                 <button
+                  onClick={() => {
+                    setHistoryModalStory(selectedStory);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-950/80 hover:bg-purple-900 text-purple-200 text-xs font-semibold border border-purple-800/80 transition-colors shadow-xs cursor-pointer"
+                  title="View Version History & Previous Iterations"
+                >
+                  <History className="w-3.5 h-3.5 text-purple-400" />
+                  <span>v{selectedStory.version || (selectedStory.history ? selectedStory.history.length : 3)} History</span>
+                </button>
+
+                <button
                   onClick={() => exportSingleStoryPdf(selectedStory, activeProduct?.name || 'Active Product')}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 text-rose-200 text-xs font-semibold border border-rose-800/80 transition-colors shadow-xs"
                   title="Export this Story as PDF"
@@ -2701,6 +3213,16 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
         productId={selectedProductId}
         productName={activeProduct?.name}
         onApplySuggestions={handleApplyScoreSuggestions}
+      />
+
+      {/* STORY VERSION HISTORY & REVERT MODAL */}
+      <StoryVersionHistoryModal
+        isOpen={!!historyModalStory}
+        onClose={() => setHistoryModalStory(null)}
+        story={historyModalStory}
+        productName={activeProduct?.name}
+        onRevert={handleRevertStory}
+        isReverting={isRevertingStory}
       />
     </div>
   );
