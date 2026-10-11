@@ -17,8 +17,17 @@ import { PersonaGapAnalysis } from './components/PersonaGapAnalysis.js';
 import { FinancialImpactScatterPlot } from './components/FinancialImpactScatterPlot.js';
 import { WorkspaceBrowser } from './components/WorkspaceBrowser.js';
 import { AiCopilotHub } from './components/AiCopilotHub.js';
-import { Product, UserProfile } from './types.js';
-import { CheckCircle2, Bot, Sparkles } from 'lucide-react';
+import { ApiGatewayView } from './components/ApiGatewayView.js';
+import { ApiHealthDashboard } from './components/ApiHealthDashboard.js';
+import { AuditTrail } from './components/AuditTrail.js';
+import { SprintPlanner } from './components/SprintPlanner.js';
+import { SandboxEnvironmentView } from './components/SandboxEnvironmentView.js';
+import { RealTimeProductProblemSolver } from './components/RealTimeProductProblemSolver.js';
+import { SupabaseDatabaseBridge } from './components/SupabaseDatabaseBridge.js';
+import { WebSocketEventMonitor } from './components/WebSocketEventMonitor.js';
+import { WebSocketConnectionToast } from './components/WebSocketConnectionToast.js';
+import { Product, UserProfile, EnvironmentMode } from './types.js';
+import { CheckCircle2, Bot, Sparkles, FlaskConical, ArrowRight } from 'lucide-react';
 import { 
   auth, 
   signInWithGoogle, 
@@ -38,6 +47,7 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [aiSubMode, setAiSubMode] = useState<'generation-studio' | 'multimodal-copilot'>('generation-studio');
+  const [environmentMode, setEnvironmentMode] = useState<EnvironmentMode>('sandbox');
 
   // Firebase User & Firestore connectivity state
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -66,7 +76,7 @@ export default function App() {
     });
 
     // Listen for Firebase Auth changes
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         setUser({
           uid: firebaseUser.uid,
@@ -74,6 +84,20 @@ export default function App() {
           displayName: firebaseUser.displayName || 'Product Manager',
           photoURL: firebaseUser.photoURL || undefined
         });
+
+        // Sync authenticated user with Cloud SQL PostgreSQL
+        try {
+          const token = await firebaseUser.getIdToken();
+          await fetch('/api/auth/sync', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+        } catch (e) {
+          console.warn('Could not sync user to PostgreSQL', e);
+        }
       } else {
         // Default PM Persona for instant preview
         setUser({
@@ -212,13 +236,16 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200">
-      {/* Toast Notification */}
+      {/* General Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-emerald-900 border border-emerald-700 text-emerald-100 px-4 py-3 rounded-xl shadow-2xl flex items-center space-x-2 text-xs font-semibold animate-bounce">
+        <div className="fixed top-20 right-6 z-50 bg-emerald-900 border border-emerald-700 text-emerald-100 px-4 py-3 rounded-xl shadow-2xl flex items-center space-x-2 text-xs font-semibold animate-fadeIn">
           <CheckCircle2 className="w-4 h-4 text-emerald-300" />
           <span>{toastMessage}</span>
         </div>
       )}
+
+      {/* Real-Time WebSocket Connection Toast System (Alerts on Reconnecting/Disconnected with Manual Reconnect) */}
+      <WebSocketConnectionToast onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)} />
 
       {/* Top Bar matching ASCII mockup:
           Navigator       Search...       Notifications   Profile */}
@@ -233,6 +260,18 @@ export default function App() {
         onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
+        environmentMode={environmentMode}
+        onToggleEnvironment={() => {
+          const next = environmentMode === 'sandbox' ? 'production' : 'sandbox';
+          setEnvironmentMode(next);
+          fetch('/api/sandbox/env', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: next })
+          }).catch(console.warn);
+          setToastMessage(`Switched to ${next.toUpperCase()} environment mode.`);
+          setTimeout(() => setToastMessage(null), 3000);
+        }}
       />
 
       {/* Main Body Container: Sidebar + Content */}
@@ -249,12 +288,19 @@ export default function App() {
           {[
             { id: 'dashboard', label: 'Dashboard' },
             { id: 'projects', label: 'Projects' },
+            { id: 'real-time-solver', label: '⚡ Real-Time Solver' },
             { id: 'ai-workspace', label: 'AI Workspace' },
             { id: 'prds', label: 'PRDs' },
             { id: 'roadmaps', label: 'Roadmaps' },
             { id: 'stories', label: 'Stories' },
             { id: 'personas', label: 'Personas' },
+            { id: 'sprint-planner', label: 'Sprint Planner' },
+            { id: 'audit-trail', label: 'Audit Trail' },
             { id: 'analytics', label: 'Analytics' },
+            { id: 'api-gateway', label: 'API Gateway' },
+            { id: 'api-health', label: 'API Health' },
+            { id: 'database', label: 'Database & Supabase' },
+            { id: 'sandbox', label: 'Sandbox Lab' },
             { id: 'settings', label: 'Settings' }
           ].map((item) => (
             <button
@@ -273,6 +319,25 @@ export default function App() {
 
         {/* Main Content Pane */}
         <main className="flex-1 max-w-7xl w-full p-4 sm:p-6 lg:p-8 overflow-y-auto">
+          {/* Active Sandbox Mode Notification Banner */}
+          {environmentMode === 'sandbox' && activeTab !== 'sandbox' && (
+            <div className="mb-6 p-3.5 rounded-xl bg-amber-950/40 border border-amber-500/40 flex items-center justify-between text-xs text-amber-200 shadow-sm animate-fadeIn">
+              <div className="flex items-center gap-2.5">
+                <FlaskConical className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  <strong>Sandbox Environment Active:</strong> Operating in isolated staging mode. Simulate real-time traffic, inject chaos faults, and test canary feature flags safely.
+                </span>
+              </div>
+              <button
+                onClick={() => setActiveTab('sandbox')}
+                className="shrink-0 flex items-center gap-1 font-bold text-amber-300 hover:text-amber-100 ml-4 px-2.5 py-1 rounded-lg bg-amber-900/60 border border-amber-600/50 transition-colors"
+              >
+                <span>Open Sandbox Lab</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {activeTab === 'dashboard' && (
             <DashboardView
               products={products}
@@ -283,6 +348,12 @@ export default function App() {
               user={user}
               tokenBudgetUsed={tokenBudgetUsed}
               tokenBudgetLimit={tokenBudgetLimit}
+              environmentMode={environmentMode}
+              onToggleEnvironment={() => {
+                const next = environmentMode === 'sandbox' ? 'production' : 'sandbox';
+                setEnvironmentMode(next);
+              }}
+              onRefreshWorkspace={loadWorkspace}
             />
           )}
 
@@ -295,6 +366,26 @@ export default function App() {
               }}
               onRefreshProducts={loadWorkspace}
             />
+          )}
+
+          {activeTab === 'real-time-solver' && (
+            <div className="space-y-6">
+              <RealTimeProductProblemSolver
+                products={products}
+                selectedProductId={selectedProductId}
+                onSelectProduct={(id) => {
+                  setSelectedProductId(id);
+                  loadWorkspace();
+                }}
+                onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+                environmentMode={environmentMode}
+                onToggleEnvironment={() => {
+                  const next = environmentMode === 'sandbox' ? 'production' : 'sandbox';
+                  setEnvironmentMode(next);
+                }}
+                onRefreshWorkspace={loadWorkspace}
+              />
+            </div>
           )}
 
           {activeTab === 'ai-workspace' && (
@@ -384,6 +475,25 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'sprint-planner' && (
+            <SprintPlanner
+              selectedProductId={selectedProductId}
+              products={products}
+              onSelectProduct={setSelectedProductId}
+              onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+              onSprintCommitted={loadWorkspace}
+            />
+          )}
+
+          {activeTab === 'audit-trail' && (
+            <AuditTrail
+              selectedProductId={selectedProductId}
+              products={products}
+              onSelectProduct={setSelectedProductId}
+              onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+            />
+          )}
+
           {activeTab === 'analytics' && (
             <div className="space-y-8">
               {/* Stakeholder Heatmap */}
@@ -451,6 +561,41 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'api-gateway' && (
+            <ApiGatewayView
+              onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+            />
+          )}
+
+          {activeTab === 'api-health' && (
+            <ApiHealthDashboard
+              onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+              environmentMode={environmentMode}
+            />
+          )}
+
+          {activeTab === 'websocket-monitor' && (
+            <WebSocketEventMonitor
+              onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+              selectedProductId={selectedProductId}
+            />
+          )}
+
+          {activeTab === 'database' && (
+            <SupabaseDatabaseBridge
+              onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+            />
+          )}
+
+          {activeTab === 'sandbox' && (
+            <SandboxEnvironmentView
+              selectedProductId={selectedProductId}
+              onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
+              environmentMode={environmentMode}
+              onSetEnvironmentMode={setEnvironmentMode}
+            />
+          )}
+
           {activeTab === 'settings' && (
             <SettingsView
               user={user}
@@ -459,6 +604,7 @@ export default function App() {
               isFirestoreConnected={isFirestoreConnected}
               tokenBudgetLimit={tokenBudgetLimit}
               tokenBudgetUsed={tokenBudgetUsed}
+              onNavigateTab={(tab) => setActiveTab(tab as NavigationTab)}
             />
           )}
         </main>

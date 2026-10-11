@@ -18,6 +18,11 @@ service cloud.firestore {
       // User generated artifacts (PRDs, stories, etc.)
       match /artifacts/{artifactId} {
         allow read, write: if isOwner(userId);
+
+        // Requirement comments and discussions
+        match /comments/{commentId} {
+          allow read, write: if isOwner(userId);
+        }
       }
 
       // User AI assets (images, videos, transcripts, music)

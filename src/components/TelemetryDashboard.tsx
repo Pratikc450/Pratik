@@ -14,7 +14,12 @@ import {
   Target,
   Zap,
   Sliders,
-  Sparkles
+  Sparkles,
+  ShieldCheck,
+  AlertTriangle,
+  Bug,
+  Terminal,
+  FileCode
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -107,16 +112,19 @@ export const TelemetryDashboard: React.FC = () => {
   const [telemetry, setTelemetry] = useState<TelemetrySummary | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [templates, setTemplates] = useState<any>({});
+  const [valTelemetry, setValTelemetry] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSimulatingDrift, setIsSimulatingDrift] = useState(false);
   const [timeSeriesMode, setTimeSeriesMode] = useState<'AGGREGATE' | 'INITIATIVES' | 'CONFIDENCE' | 'PRIORITY_SHIFT'>('AGGREGATE');
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [telRes, auditRes, tplRes] = await Promise.all([
+      const [telRes, auditRes, tplRes, valRes] = await Promise.all([
         fetch('/api/telemetry'),
         fetch('/api/audit-logs'),
-        fetch('/api/templates')
+        fetch('/api/templates'),
+        fetch('/api/telemetry/validation-failures')
       ]);
 
       if (telRes.ok) {
@@ -131,10 +139,47 @@ export const TelemetryDashboard: React.FC = () => {
         const data = await tplRes.json();
         setTemplates(data.templates || {});
       }
+      if (valRes.ok) {
+        const data = await valRes.json();
+        setValTelemetry(data);
+      }
     } catch (err) {
       console.error('Failed to fetch telemetry data', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSimulateDrift = async () => {
+    setIsSimulatingDrift(true);
+    try {
+      // Intentionally trigger validation failure on /api/products
+      await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: 'Missing required product name & vision' })
+      });
+      // Refresh telemetry
+      const res = await fetch('/api/telemetry/validation-failures');
+      if (res.ok) {
+        setValTelemetry(await res.json());
+      }
+    } catch (err) {
+      console.error('Error simulating schema drift', err);
+    } finally {
+      setIsSimulatingDrift(false);
+    }
+  };
+
+  const handleClearValTelemetry = async () => {
+    try {
+      await fetch('/api/telemetry/validation-failures/clear', { method: 'POST' });
+      const res = await fetch('/api/telemetry/validation-failures');
+      if (res.ok) {
+        setValTelemetry(await res.json());
+      }
+    } catch (err) {
+      console.error('Error clearing validation telemetry', err);
     }
   };
 
@@ -533,6 +578,143 @@ export const TelemetryDashboard: React.FC = () => {
                 <div className="text-[10px] text-slate-500 font-mono">User: {log.userId} · Task: {log.taskType}</div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Centralized Zod Validation & Schema Drift Observability */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div className="flex items-center space-x-2">
+              <ShieldCheck className="w-5 h-5 text-emerald-400" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-100">Centralized Zod Validation & Schema Drift Observability</h3>
+                <p className="text-xs text-slate-400">Strict runtime barrier validating payloads before hitting business logic</p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={handleSimulateDrift}
+                disabled={isSimulatingDrift}
+                className="px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-950/70 hover:bg-amber-900/80 text-amber-300 border border-amber-800/80 transition-colors flex items-center space-x-1.5"
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>{isSimulatingDrift ? 'Testing...' : 'Simulate Invalid Payload'}</span>
+              </button>
+              <button
+                onClick={handleClearValTelemetry}
+                className="px-2.5 py-1 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+              >
+                Clear Telemetry
+              </button>
+            </div>
+          </div>
+
+          {/* Validation Metrics Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+              <div className="text-[10px] uppercase font-mono text-slate-400 tracking-wider">Interceptions</div>
+              <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
+                {valTelemetry?.totalFailures ?? 0}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Blocked pre-logic</div>
+            </div>
+
+            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+              <div className="text-[10px] uppercase font-mono text-slate-400 tracking-wider">Active Schemas</div>
+              <div className="text-xl font-bold font-mono text-indigo-400 mt-1">
+                100%
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Products, Artifacts, Tests</div>
+            </div>
+
+            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+              <div className="text-[10px] uppercase font-mono text-slate-400 tracking-wider">Top Drift Vector</div>
+              <div className="text-xs font-bold font-mono text-amber-300 mt-2 truncate">
+                {valTelemetry?.topFailedFields?.[0]?.field ? `${valTelemetry.topFailedFields[0].field} (${valTelemetry.topFailedFields[0].count}x)` : 'None detected'}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Most common missing input</div>
+            </div>
+
+            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+              <div className="text-[10px] uppercase font-mono text-slate-400 tracking-wider">Top Endpoint</div>
+              <div className="text-xs font-bold font-mono text-blue-300 mt-2 truncate">
+                {valTelemetry?.topFailedEndpoints?.[0]?.endpoint || 'Clean state'}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Protected barrier route</div>
+            </div>
+          </div>
+
+          {/* Drift Types Breakdown */}
+          {valTelemetry?.driftBreakdown && (
+            <div className="flex flex-wrap items-center gap-2 pt-1 pb-1">
+              <span className="text-[11px] font-mono text-slate-400">Drift Classification:</span>
+              {Object.entries(valTelemetry.driftBreakdown as Record<string, number>).map(([type, count]) => (
+                <span
+                  key={type}
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                    count > 0
+                      ? 'bg-amber-950/60 text-amber-300 border-amber-800/80 font-bold'
+                      : 'bg-slate-950 text-slate-500 border-slate-800'
+                  }`}
+                >
+                  {type}: {count}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Recent Validation Failure Stream */}
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
+              <Terminal className="w-3.5 h-3.5 text-slate-400" />
+              <span>Real-Time Schema Drift Events Stream</span>
+            </div>
+
+            {(!valTelemetry?.recentFailures || valTelemetry.recentFailures.length === 0) ? (
+              <div className="p-4 bg-slate-950 rounded-lg border border-slate-800 text-center text-xs text-slate-500">
+                No schema validation errors recorded yet. All incoming payloads adhere strictly to defined Zod schemas.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {valTelemetry.recentFailures.map((event: any) => (
+                  <div key={event.id} className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-xs space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 font-bold">
+                          HTTP 400
+                        </span>
+                        <span className="font-mono text-[11px] text-slate-200 font-semibold">{event.endpoint}</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-800/80">
+                          {event.driftType}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {new Date(event.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1 bg-slate-900/80 p-2 rounded border border-slate-800/80">
+                      {event.issues?.map((iss: any, idx: number) => (
+                        <div key={idx} className="font-mono text-[11px] text-rose-400 flex items-start space-x-1.5">
+                          <span className="text-slate-500">›</span>
+                          <span className="font-semibold text-rose-300">{iss.path || 'root'}:</span>
+                          <span className="text-slate-300">{iss.message}</span>
+                          <span className="text-[9px] text-slate-500">({iss.code})</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {event.samplePayload && Object.keys(event.samplePayload).length > 0 && (
+                      <div className="text-[10px] font-mono text-slate-500">
+                        Payload preview: {JSON.stringify(event.samplePayload)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

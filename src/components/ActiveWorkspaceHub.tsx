@@ -276,6 +276,24 @@ export const ActiveWorkspaceHub: React.FC<ActiveWorkspaceHubProps> = ({
           {/* Action Hub Buttons */}
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
+              onClick={() => onNavigateTab('sprint-planner')}
+              className="px-3.5 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 text-xs font-semibold border border-emerald-800/60 flex items-center gap-1.5 transition-all cursor-pointer"
+              title="Open 2-Week Sprint Capacity Planner"
+            >
+              <Zap className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Sprint Planner</span>
+            </button>
+
+            <button
+              onClick={() => onNavigateTab('audit-trail')}
+              className="px-3.5 py-2 rounded-xl bg-indigo-950/80 hover:bg-indigo-900/80 text-indigo-300 text-xs font-semibold border border-indigo-800/60 flex items-center gap-1.5 transition-all cursor-pointer"
+              title="Open Chronological Audit Trail"
+            >
+              <Activity className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Audit Trail</span>
+            </button>
+
+            <button
               onClick={handleExportWorkspaceBundle}
               className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 flex items-center gap-1.5 transition-colors"
               title="Download full JSON bundle of 19 specs and sprint state"
@@ -287,7 +305,7 @@ export const ActiveWorkspaceHub: React.FC<ActiveWorkspaceHubProps> = ({
             <button
               onClick={handleTriggerPulse}
               disabled={isPulsing}
-              className="px-3.5 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 text-xs font-semibold border border-emerald-800/60 flex items-center gap-1.5 transition-all active:scale-95"
+              className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-semibold border border-slate-700 flex items-center gap-1.5 transition-all active:scale-95"
               title="Trigger a real-time team activity simulation"
             >
               <Zap className={`w-3.5 h-3.5 text-emerald-400 ${isPulsing ? 'animate-spin' : ''}`} />

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Users, Sparkles, AlertCircle, Target, Briefcase, Award, Check, CheckCircle2, X, ListPlus, FileText, ArrowRight } from 'lucide-react';
-import { Product } from '../types.js';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Users, Sparkles, AlertCircle, Target, Briefcase, Award, Check, CheckCircle2, X, ListPlus, FileText, ArrowRight, Plus, Gauge } from 'lucide-react';
+import { Product, Persona } from '../types.js';
+import { PersonaCreator } from './PersonaCreator.js';
 
 interface PersonaListViewProps {
   selectedProductId: string;
@@ -16,7 +17,10 @@ export const PersonaListView: React.FC<PersonaListViewProps> = ({
   onNavigateTab
 }) => {
   const [personasArtifact, setPersonasArtifact] = useState<any>(null);
+  const [extraPersonas, setExtraPersonas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isCreatorOpen, setIsCreatorOpen] = useState(false);
+  const [successToast, setSuccessToast] = useState<string | null>(null);
   
   // AI Persona Story Generator Modal State
   const [generatorPersona, setGeneratorPersona] = useState<any | null>(null);
@@ -24,15 +28,22 @@ export const PersonaListView: React.FC<PersonaListViewProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [addedSuccess, setAddedSuccess] = useState(false);
 
-  useEffect(() => {
+  const loadPersonas = () => {
     fetch(`/api/products/${selectedProductId}`)
       .then(res => res.json())
       .then(data => {
-        const p = (data.artifacts || []).find((a: any) => a.taskType === 'USER_PERSONAS');
+        const p = (data.artifacts || []).find((a: any) => a.taskType === 'USER_PERSONAS' || a.taskType === 'PERSONAS');
         setPersonasArtifact(p);
+        if (Array.isArray(data.personas)) {
+          setExtraPersonas(data.personas);
+        }
         setLoading(false);
       })
       .catch(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadPersonas();
   }, [selectedProductId]);
 
   const handleOpenGenerator = (persona: any) => {
@@ -189,7 +200,30 @@ export const PersonaListView: React.FC<PersonaListViewProps> = ({
     }
   ];
 
-  const personas = personasArtifact?.parsedContent?.personas || defaultPersonas;
+  const artifactPersonas = personasArtifact?.schemaData?.personas || personasArtifact?.parsedContent?.personas || defaultPersonas;
+  
+  // Merge extra created personas that are not duplicates
+  const allPersonas = useMemo(() => {
+    const list = [...artifactPersonas];
+    for (const ep of extraPersonas) {
+      if (!list.some(p => p.name?.toLowerCase() === ep.name?.toLowerCase())) {
+        list.unshift({
+          name: ep.name,
+          role: ep.role,
+          demographics: ep.demographics || 'Enterprise team member',
+          techProficiency: ep.techComfort || ep.technicalLiteracy || 'MEDIUM',
+          techComfort: ep.techComfort || ep.technicalLiteracy || 'Medium',
+          jtbd: ep.jtbd || ep.goal || 'Eliminate manual turnaround latency',
+          corePainPoint: ep.painPoint || (ep.painPoints && ep.painPoints[0]) || 'Operational friction',
+          painPoints: ep.painPoints || (ep.painPoint ? [ep.painPoint] : []),
+          quote: ep.quote
+        });
+      }
+    }
+    return list;
+  }, [artifactPersonas, extraPersonas]);
+
+  const activeProduct = products.find(p => p.id === selectedProductId) || products[0];
 
   return (
     <div className="space-y-6">
@@ -200,11 +234,11 @@ export const PersonaListView: React.FC<PersonaListViewProps> = ({
             <span>User Personas</span>
           </h1>
           <p className="mt-1 text-xs text-slate-400">
-            Falsifiable user archetypes, Jobs-to-be-Done (JTBD), core friction, and verbatim customer quotes.
+            Falsifiable user archetypes, Jobs-to-be-Done (JTBD), core friction, and technical literacy profiles.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           <select
             value={selectedProductId}
             onChange={(e) => onSelectProduct(e.target.value)}
@@ -216,76 +250,128 @@ export const PersonaListView: React.FC<PersonaListViewProps> = ({
           </select>
 
           <button
-            onClick={() => onNavigateTab('ai-workspace')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold shadow-sm transition-colors"
+            onClick={() => setIsCreatorOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-bold shadow-md shadow-amber-950/50 transition-all transform active:scale-95 cursor-pointer"
           >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Generate Personas</span>
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create Persona</span>
+          </button>
+
+          <button
+            onClick={() => onNavigateTab('ai-workspace')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>Generate Full Suite</span>
           </button>
         </div>
       </div>
 
+      {successToast && (
+        <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>{successToast}</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {personas.map((persona: any, idx: number) => (
-          <div key={idx} className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-base font-bold text-slate-100">{persona.name}</h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-amber-400 font-medium flex items-center gap-1">
-                    <Briefcase className="w-3.5 h-3.5" />
-                    {persona.role}
-                  </span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                    Tech: {persona.techProficiency}
-                  </span>
+        {allPersonas.map((persona: any, idx: number) => {
+          const techValue = (persona.techComfort || persona.techProficiency || 'Medium').toString().toUpperCase();
+          const pPoints: string[] = Array.isArray(persona.painPoints) && persona.painPoints.length > 0
+            ? persona.painPoints
+            : [persona.corePainPoint || persona.painPoint || 'Manual bottlenecks'];
+
+          return (
+            <div key={idx} className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-4 hover:border-slate-700 transition-colors">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-slate-100">{persona.name}</h3>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-amber-400 font-medium flex items-center gap-1">
+                      <Briefcase className="w-3.5 h-3.5" />
+                      {persona.role}
+                    </span>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                      Tech: {techValue}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="w-10 h-10 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold text-sm shadow-inner">
+                  {persona.name?.charAt(0) || 'P'}
                 </div>
               </div>
 
-              <div className="w-10 h-10 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold text-sm">
-                {persona.name.charAt(0)}
+              <p className="text-xs text-slate-400 leading-relaxed">{persona.demographics}</p>
+
+              <div className="space-y-2.5 pt-3 border-t border-slate-800/80 text-xs">
+                {/* JTBD */}
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/60 space-y-1">
+                  <div className="flex items-center gap-1 text-slate-300 font-semibold">
+                    <Target className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Job To Be Done (JTBD)</span>
+                  </div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">{persona.jtbd}</p>
+                </div>
+
+                {/* Pain Points */}
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/60 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1 text-slate-300 font-semibold">
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Pain Points & Friction</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {pPoints.length} defined
+                    </span>
+                  </div>
+                  <ul className="space-y-1">
+                    {pPoints.map((pp, ppIdx) => (
+                      <li key={ppIdx} className="text-slate-400 text-[11px] leading-relaxed flex items-start gap-1.5">
+                        <span className="text-rose-400 font-bold shrink-0">•</span>
+                        <span>{pp}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {persona.quote && (
+                  <div className="italic text-[11px] text-slate-400 border-l-2 border-amber-500/60 pl-3 py-0.5">
+                    "{persona.quote}"
+                  </div>
+                )}
+
+                {/* AI Persona Story Generator Button */}
+                <div className="pt-2">
+                  <button
+                    onClick={() => handleOpenGenerator(persona)}
+                    className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-600/20 via-orange-600/20 to-amber-600/20 hover:from-amber-600/30 hover:to-orange-600/30 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm active:scale-98"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>AI Persona Story Generator (5 Tailored Stories)</span>
+                  </button>
+                </div>
               </div>
             </div>
-
-            <p className="text-xs text-slate-400 leading-relaxed">{persona.demographics}</p>
-
-            <div className="space-y-2.5 pt-3 border-t border-slate-800/80 text-xs">
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/60 space-y-1">
-                <div className="flex items-center gap-1 text-slate-300 font-semibold">
-                  <Target className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Job To Be Done (JTBD)</span>
-                </div>
-                <p className="text-slate-400 text-[11px] leading-relaxed">{persona.jtbd}</p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/60 space-y-1">
-                <div className="flex items-center gap-1 text-slate-300 font-semibold">
-                  <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Core Pain Point</span>
-                </div>
-                <p className="text-slate-400 text-[11px] leading-relaxed">{persona.corePainPoint}</p>
-              </div>
-
-              {persona.quote && (
-                <div className="italic text-[11px] text-slate-400 border-l-2 border-amber-500/60 pl-3 py-0.5">
-                  "{persona.quote}"
-                </div>
-              )}
-
-              {/* AI Persona Story Generator Button */}
-              <div className="pt-2">
-                <button
-                  onClick={() => handleOpenGenerator(persona)}
-                  className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-600/20 via-orange-600/20 to-amber-600/20 hover:from-amber-600/30 hover:to-orange-600/30 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm active:scale-98"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  <span>AI Persona Story Generator (5 Tailored Stories)</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      {/* Persona Creator Modal */}
+      {isCreatorOpen && (
+        <PersonaCreator
+          productId={selectedProductId}
+          product={activeProduct}
+          onClose={() => setIsCreatorOpen(false)}
+          onPersonaCreated={(newPersona) => {
+            setSuccessToast(`Created persona "${newPersona.name}" (${newPersona.role})!`);
+            setTimeout(() => setSuccessToast(null), 4000);
+            loadPersonas();
+            setIsCreatorOpen(false);
+          }}
+          isModal={true}
+        />
+      )}
 
       {/* AI Persona Story Generator Modal */}
       {generatorPersona && (

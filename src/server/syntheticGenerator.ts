@@ -306,6 +306,33 @@ function generateSynthesizedUserStories(
 
 function generateSynthesizedRoadmap(product: any, problems: any[], features: any[], userRequest: string, isSparse: boolean) {
   return {
+    schemaVersion: 2,
+    theme: "Autonomous Enterprise Trade Commerce & Instant Underwriting Roadmap",
+    timeHorizon: "FY 2027 - Q1 to Q4 (12 Months)",
+    strategicAlignment: "Directly aligns buyer liquidity, merchant sales conversion, and PayFlow transaction volume with zero-friction checkout.",
+    phases: [
+      {
+        phaseName: "Foundation & Instant Underwriting",
+        targetQuarter: "Q1 2027",
+        milestones: ["Sub-60s Bureau Risk Decisioning Engine", "In-iframe Digital Terms Promissory Note"],
+        deliverables: ["Instant Net-30 Checkout Modal (MVP)", "Webhooks for Merchant ERP Notifications"],
+        dependencies: ["External Credit Bureau Gateway"]
+      },
+      {
+        phaseName: "Enterprise ERP Synchronization",
+        targetQuarter: "Q2 2027",
+        milestones: ["Two-Way NetSuite & SAP Purchase Order Sync", "Multi-Tier Corporate Spend Approvals"],
+        deliverables: ["Enterprise ERP Connector Suite", "Automated Reconciliation Ledger"],
+        dependencies: ["Instant Net-30 Checkout Modal"]
+      },
+      {
+        phaseName: "Cross-Border Settlement & Syndication",
+        targetQuarter: "Q3 2027",
+        milestones: ["Multi-Currency Trade Credit Syndication", "Real-Time Foreign Exchange Hedging"],
+        deliverables: ["Lending Syndicate Dashboard", "Global Regulatory Compliance Module"],
+        dependencies: ["Enterprise ERP Connector Suite"]
+      }
+    ],
     vision: product?.vision || "Enable autonomous, friction-free enterprise trade commerce.",
     strategicPillars: [
       "Transaction Velocity: Underwriting turnaround reduction",

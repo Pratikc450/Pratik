@@ -139,94 +139,106 @@ ${data.openQuestions.map((q: string) => `- ❓ ${q}`).join('\n')}
 }
 
 function renderRoadmapToProse(data: any): string {
-  return `# Strategic Roadmap
-**Vision:** ${data.vision}
+  const theme = data.theme || data.vision || 'Strategic Product Roadmap';
+  const pillars = Array.isArray(data.strategicPillars) ? data.strategicPillars : [];
+  const horizons = Array.isArray(data.quarterHorizons) ? data.quarterHorizons : [];
+  const phases = Array.isArray(data.phases) ? data.phases : [];
+  const risks = Array.isArray(data.risksAndMitigations) ? data.risksAndMitigations : [];
+  const questions = Array.isArray(data.openQuestions) ? data.openQuestions : [];
 
+  return `# Strategic Roadmap: ${theme}
+${data.timeHorizon ? `**Time Horizon:** ${data.timeHorizon}\n` : ''}${data.strategicAlignment ? `**Strategic Alignment:** ${data.strategicAlignment}\n` : ''}${data.vision ? `**Vision:** ${data.vision}\n` : ''}
 ---
 
-## Strategic Pillars
-${data.strategicPillars.map((p: string, i: number) => `${i + 1}. **${p}**`).join('\n')}
+${pillars.length > 0 ? `## Strategic Pillars\n${pillars.map((p: string, i: number) => `${i + 1}. **${p}**`).join('\n')}\n\n---\n` : ''}
 
----
+## Roadmap Phases & Strategic Milestones
 
-## Horizons & Quarterly Milestones
+${phases.length > 0 ? phases.map((phase: any) => `### 🗓️ Phase: ${phase.phaseName} (${phase.targetQuarter})
+- **Milestones:** ${(phase.milestones || []).join(', ')}
+- **Key Deliverables:** ${(phase.deliverables || []).join(', ')}
+- **Dependencies:** ${(phase.dependencies || []).length > 0 ? phase.dependencies.join(', ') : 'None'}
+`).join('\n---\n') : ''}
 
-${data.quarterHorizons.map((q: any) => `### 🗓️ ${q.quarter} — Theme: "${q.theme}"
-${q.initiatives.map((init: any) => `#### [${init.priority}] ${init.title} (${init.estimatedEffortWeeks} weeks)
+${horizons.length > 0 ? horizons.map((q: any) => `### 🗓️ ${q.quarter} — Theme: "${q.theme}"
+${(q.initiatives || []).map((init: any) => `#### [${init.priority}] ${init.title} (${init.estimatedEffortWeeks} weeks)
 ${init.description}
 - **Target Outcome:** ${init.targetOutcome}
-- **Dependencies:** ${init.dependencies.length > 0 ? init.dependencies.join(', ') : 'None'}
+- **Dependencies:** ${(init.dependencies || []).length > 0 ? init.dependencies.join(', ') : 'None'}
 `).join('\n')}
-`).join('\n---\n')}
+`).join('\n---\n') : ''}
 
-## Delivery Risks & Strategic Mitigations
-${data.risksAndMitigations.map((rm: any) => `- **Risk:** ${rm.risk} ➔ **Mitigation:** ${rm.mitigation}`).join('\n')}
+${risks.length > 0 ? `## Delivery Risks & Strategic Mitigations\n${risks.map((rm: any) => `- **Risk:** ${rm.risk} ➔ **Mitigation:** ${rm.mitigation}`).join('\n')}\n\n---\n` : ''}
 
-## Open Strategic Unknowns
-${data.openQuestions.map((q: string) => `- ❓ ${q}`).join('\n')}
+${questions.length > 0 ? `## Open Strategic Unknowns\n${questions.map((q: string) => `- ❓ ${q}`).join('\n')}\n` : ''}
 `;
 }
 
 function renderPersonasToProse(data: any): string {
+  const personas = Array.isArray(data.personas) ? data.personas : [];
+  const unmetNeeds = Array.isArray(data.unmetMarketNeeds) ? data.unmetMarketNeeds : [];
+  const openQuestions = Array.isArray(data.openQuestions) ? data.openQuestions : [];
+
   return `# Target User Personas
 **Document:** Validated Qualitative Archetypes
 
 ---
 
-${data.personas.map((p: any) => `## 👤 ${p.name} — ${p.role}
-> "${p.verbatimQuote}"
+${personas.map((p: any) => `## 👤 ${p.name} — ${p.role}
+> "${p.verbatimQuote || ''}"
 
-- **Demographics & Environment:** ${p.demographics}
-- **Technical Proficiency:** \`${p.techProficiency}\`
+- **Demographics & Environment:** ${p.demographics || 'Target User Segment'}
+- **Technical Proficiency:** \`${p.techProficiency || 'MEDIUM'}\`
 
 ### Core Jobs To Be Done (JTBD)
-${p.jobsToBeDone.map((j: string) => `- 🎯 ${j}`).join('\n')}
+${(p.jobsToBeDone || []).map((j: string) => `- 🎯 ${j}`).join('\n')}
 
 ### Critical Pain Points & Friction
-${p.painPoints.map((pp: string) => `- ⚠️ ${pp}`).join('\n')}
+${(p.painPoints || []).map((pp: string) => `- ⚠️ ${pp}`).join('\n')}
 
 ### Core Motivations
-${p.coreMotivations.map((m: string) => `- 💡 ${m}`).join('\n')}
+${(p.coreMotivations || []).map((m: string) => `- 💡 ${m}`).join('\n')}
 `).join('\n---\n')}
 
-## Unmet Market & Competitive Gaps
-${data.unmetMarketNeeds.map((u: string) => `- ⚡ ${u}`).join('\n')}
-
-## Open Research Gaps
-${data.openQuestions.map((q: string) => `- ❓ ${q}`).join('\n')}
+${unmetNeeds.length > 0 ? `## Unmet Market & Competitive Gaps\n${unmetNeeds.map((u: string) => `- ⚡ ${u}`).join('\n')}\n\n` : ''}
+${openQuestions.length > 0 ? `## Open Research Gaps\n${openQuestions.map((q: string) => `- ❓ ${q}`).join('\n')}\n` : ''}
 `;
 }
 
 function renderKpisToProse(data: any): string {
+  const leading = Array.isArray(data.leadingIndicators) ? data.leadingIndicators : [];
+  const lagging = Array.isArray(data.laggingIndicators) ? data.laggingIndicators : [];
+  const guardrails = Array.isArray(data.guardrailMetrics) ? data.guardrailMetrics : [];
+  const openQuestions = Array.isArray(data.openQuestions) ? data.openQuestions : [];
+
   return `# Product KPI & Telemetry Framework
 
-## ⭐ North Star Metric
-**${data.northStarMetric.metric}**
-- **Definition:** ${data.northStarMetric.definition}
-- **Target:** \`${data.northStarMetric.target}\` (Baseline: ${data.northStarMetric.currentBaseline})
-- **Rationale:** ${data.northStarMetric.rationale}
-
+${data.northStarMetric ? `## ⭐ North Star Metric
+**${data.northStarMetric.metric || 'Primary North Star'}**
+- **Definition:** ${data.northStarMetric.definition || ''}
+- **Target:** \`${data.northStarMetric.target || ''}\` (Baseline: ${data.northStarMetric.currentBaseline || 'N/A'})
+- **Rationale:** ${data.northStarMetric.rationale || ''}
 ---
+` : ''}
 
-## 📈 Leading Indicators (Predictive)
+${leading.length > 0 ? `## 📈 Leading Indicators (Predictive)
 | Metric | Cadence | Target | Signal Intent |
 | :--- | :--- | :--- | :--- |
-${data.leadingIndicators.map((li: any) => `| **${li.metric}** | \`${li.cadence}\` | ${li.target} | ${li.signalIntent} |`).join('\n')}
+${leading.map((li: any) => `| **${li.metric}** | \`${li.cadence}\` | ${li.target} | ${li.signalIntent} |`).join('\n')}
 
 ---
+` : ''}
 
-## 📊 Lagging Indicators (Business Impact)
+${lagging.length > 0 ? `## 📊 Lagging Indicators (Business Impact)
 | Metric | Cadence | Target | Business Impact |
 | :--- | :--- | :--- | :--- |
-${data.laggingIndicators.map((li: any) => `| **${li.metric}** | \`${li.cadence}\` | ${li.target} | ${li.businessImpact} |`).join('\n')}
+${lagging.map((li: any) => `| **${li.metric}** | \`${li.cadence}\` | ${li.target} | ${li.businessImpact} |`).join('\n')}
 
 ---
+` : ''}
 
-## 🛡️ Guardrail Metrics (Constraints)
-${data.guardrailMetrics.map((gm: any) => `- **${gm.metric}**: Must not breach \`${gm.threshold}\`. *Breach Action:* ${gm.breachAction}`).join('\n')}
-
-## Open Telemetry Gaps
-${data.openQuestions.map((q: string) => `- ❓ ${q}`).join('\n')}
+${guardrails.length > 0 ? `## 🛡️ Guardrail Metrics (Constraints)\n${guardrails.map((gm: any) => `- **${gm.metric}**: Must not breach \`${gm.threshold}\`. *Breach Action:* ${gm.breachAction}`).join('\n')}\n\n` : ''}
+${openQuestions.length > 0 ? `## Open Telemetry Gaps\n${openQuestions.map((q: string) => `- ❓ ${q}`).join('\n')}\n` : ''}
 `;
 }
 

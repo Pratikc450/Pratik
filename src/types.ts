@@ -211,6 +211,12 @@ export interface Persona {
   role: string;
   goal: string;
   painPoint: string;
+  painPoints?: string[];
+  techComfort?: 'Low' | 'Medium' | 'High' | 'Expert';
+  technicalLiteracy?: string;
+  demographics?: string;
+  jtbd?: string;
+  quote?: string;
 }
 
 export interface Feature {
@@ -246,6 +252,7 @@ export interface GenerationMetadata {
   requestId: string;
   tokenBudgetUsed: number;
   tokenBudgetLimit: number;
+  schemaVersion?: number;
 }
 
 export interface ArtifactVersionRecord {
@@ -256,7 +263,48 @@ export interface ArtifactVersionRecord {
   changeSummary?: string;
   schemaData: any;
   renderedMarkdown: string;
+  schemaVersion?: number;
   metadata?: Partial<GenerationMetadata>;
+}
+
+export interface CommentReply {
+  id: string;
+  author: {
+    name: string;
+    role: string;
+    avatarBg: string;
+    email?: string;
+  };
+  content: string;
+  createdAt: string;
+  reactions?: Record<string, string[]>;
+}
+
+export interface ArtifactComment {
+  id: string;
+  artifactId: string;
+  productId: string;
+  targetType: 'PRD' | 'USER_STORIES' | 'REQUIREMENT' | 'STORY';
+  requirementId?: string; // e.g. 'FR-101', 'FR-102', 'US-101', 'OBJECTIVE', 'MVP_SCOPE'
+  requirementTitle?: string;
+  author: {
+    name: string;
+    role: string;
+    avatarBg: string;
+    email?: string;
+  };
+  content: string;
+  createdAt: string;
+  updatedAt?: string;
+  status: 'OPEN' | 'RESOLVED';
+  resolvedBy?: {
+    name: string;
+    role: string;
+  };
+  resolvedAt?: string;
+  replies: CommentReply[];
+  reactions?: Record<string, string[]>;
+  tag?: string; // 'Architecture' | 'Security' | 'Scope' | 'SLA' | 'UX' | 'General'
 }
 
 export interface GeneratedArtifact {
@@ -268,19 +316,57 @@ export interface GeneratedArtifact {
   version: number;
   schemaData: any;
   renderedMarkdown: string;
+  schemaVersion?: number;
   metadata: GenerationMetadata;
   consistencyIssues?: string[];
   versionHistory?: ArtifactVersionRecord[];
+  comments?: ArtifactComment[];
 }
 
 export interface AuditLogEntry {
   id: string;
   artifactId: string;
-  taskType: ArtifactType;
-  action: 'GENERATED' | 'REPAIRED' | 'APPROVED' | 'MODIFIED';
+  taskType: ArtifactType | 'SYSTEM' | string;
+  action: 'GENERATED' | 'REPAIRED' | 'APPROVED' | 'MODIFIED' | 'WEBSOCKET_TRANSITION' | 'LATENCY_SPIKE' | 'AUTO_RECONNECT' | string;
   userId: string;
   timestamp: string;
   details: string;
+  productId?: string;
+  version?: number;
+  metadata?: Record<string, any>;
+}
+
+export type AuditCategory = 'ARTIFACT_MODIFICATION' | 'APPROVAL_GATE' | 'AI_GENERATION' | 'WORKSPACE_ACTION';
+
+export interface AuditTrailItem {
+  id: string;
+  timestamp: string;
+  category: AuditCategory;
+  title: string;
+  description: string;
+  artifactId?: string;
+  artifactTitle?: string;
+  taskType?: ArtifactType;
+  action?: 'GENERATED' | 'REPAIRED' | 'APPROVED' | 'MODIFIED' | 'VERSION_CREATED' | 'COMMENT_ADDED';
+  author: {
+    name: string;
+    role: string;
+    avatarBg?: string;
+  };
+  version?: number;
+  status?: string;
+  productId?: string;
+  metadata?: {
+    model?: string;
+    latencyMs?: number;
+    tokensUsed?: number;
+    changes?: string[];
+    schemaVersion?: number;
+    diffSnippet?: string;
+    approvedBy?: string;
+    targetVersion?: number;
+  };
+  details?: string;
 }
 
 export interface TelemetrySummary {
@@ -418,6 +504,7 @@ export interface UserProfile {
   email: string;
   displayName?: string;
   photoURL?: string;
+  isGoogleAuthenticated?: boolean;
 }
 
 export type ActivityEventType =
@@ -474,3 +561,389 @@ export interface CompleteWorkspacePayload {
   strategicGoals?: string;
   selectedArtifacts?: ArtifactType[];
 }
+
+// ==========================================
+// API GATEWAY & DEVELOPER INTERFACE TYPES
+// ==========================================
+
+export type ApiScope = 
+  | 'artifacts:read'
+  | 'artifacts:write'
+  | 'generate:execute'
+  | 'comments:manage'
+  | 'schemas:validate'
+  | 'audit:read'
+  | 'admin:all';
+
+export type ApiEnvironment = 'production' | 'staging' | 'development';
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string; // e.g. "sk_live_prodpilot_88a9" or masked "sk_live_••••••88a9"
+  secretToken?: string; // Only returned on generation
+  hashedToken: string;
+  environment: ApiEnvironment;
+  scopes: ApiScope[];
+  rateLimitPerMinute: number;
+  status: 'active' | 'revoked' | 'expired';
+  createdAt: string;
+  lastUsedAt?: string;
+  expiresAt?: string;
+  requestCount: number;
+  lastClientIp?: string;
+}
+
+export interface ApiEndpointSpec {
+  id: string;
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  path: string;
+  category: 'Generation Engine' | 'Zod Schemas & Migration' | 'Workspaces & Products' | 'Discussions & Collaboration' | 'Governance & Approvals' | 'Developer Keys & Telemetry';
+  title: string;
+  description: string;
+  requiredScopes: ApiScope[];
+  rateLimit: string;
+  parameters?: Array<{
+    name: string;
+    in: 'query' | 'path' | 'header';
+    type: string;
+    required: boolean;
+    description: string;
+    default?: string;
+  }>;
+  requestBodySchema?: string;
+  defaultRequestBody?: string;
+  responseSample: any;
+  curlExample: string;
+}
+
+export interface ApiExecutionResult {
+  statusCode: number;
+  statusText: string;
+  latencyMs: number;
+  headers: Record<string, string>;
+  data: any;
+  timestamp: string;
+}
+
+export interface ApiGatewayTelemetry {
+  status: 'operational' | 'degraded';
+  uptimePercentage: number;
+  p50LatencyMs: number;
+  p95LatencyMs: number;
+  totalApiCalls24h: number;
+  activeApiKeysCount: number;
+  validationSuccessRate: number;
+  rateLimitQuota: {
+    limitPerMinute: number;
+    remaining: number;
+  };
+}
+
+export interface ApiRequestAuditLogEntry {
+  id: string;
+  timestamp: string;
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  path: string;
+  statusCode: number;
+  statusText: string;
+  latencyMs: number;
+  apiKeyPrefix?: string;
+  clientIp: string;
+  scopeUsed?: string;
+  outcome: 'SUCCESS' | 'CLIENT_ERROR' | 'SERVER_ERROR' | 'UNAUTHORIZED';
+  details: string;
+  userAgent?: string;
+}
+
+export interface ApiAuditLogsStats {
+  totalRequests: number;
+  successCount: number;
+  clientErrorCount: number;
+  serverErrorCount: number;
+  avgLatencyMs: number;
+  successRate: number;
+}
+
+// ==========================================
+// AI RATE LIMITER & QUOTA MONITOR TYPES
+// ==========================================
+
+export interface AiServiceQuota {
+  serviceId: string;
+  serviceName: string;
+  modelIdentifier: string;
+  category: 'Core Generation' | 'Reasoning & Verification' | 'Streaming Engine' | 'Vector Grounding' | 'Failover Redundancy';
+  status: 'healthy' | 'approaching_limit' | 'throttled' | 'standby';
+  rpmQuota: number;
+  rpmUsed: number;
+  rpmRemaining: number;
+  tpmQuota: number;
+  tpmUsed: number;
+  tpmRemaining: number;
+  dailyTokenQuota: number;
+  dailyTokenUsed: number;
+  dailyTokenRemaining: number;
+  dailyRequestQuota: number;
+  dailyRequestUsed: number;
+  dailyRequestRemaining: number;
+  concurrencyLimit: number;
+  concurrencyCurrent: number;
+  upcomingWindowResetSeconds: number;
+  upcomingDailyResetUtc: string;
+  p95LatencyMs: number;
+  retryAfterSeconds?: number;
+  lastRequestAt: string;
+  hourlySparkline: number[];
+}
+
+export interface AiGatewayRateLimiterOverview {
+  overallStatus: 'optimal' | 'warning' | 'throttled';
+  tier: 'Developer Free' | 'Pro PM Workspace' | 'Enterprise Scale';
+  slidingWindowSeconds: number;
+  upcomingWindowResetSeconds: number;
+  upcomingDailyResetUtc: string;
+  totalDailyRequestsQuota: number;
+  totalDailyRequestsUsed: number;
+  totalDailyRequestsRemaining: number;
+  totalDailyTokensQuota: number;
+  totalDailyTokensUsed: number;
+  totalDailyTokensRemaining: number;
+  activeConcurrency: number;
+  maxConcurrency: number;
+  services: AiServiceQuota[];
+  tokenBuckets: Array<{
+    bucketId: string;
+    name: string;
+    capacity: number;
+    currentTokens: number;
+    fillPercentage: number;
+    refillRatePerSec: number;
+    algorithm: 'Token Bucket' | 'Sliding Window Counter' | 'Leaky Bucket';
+  }>;
+  recentThrottleEvents: Array<{
+    id: string;
+    timestamp: string;
+    serviceId: string;
+    reason: string;
+    retryAfterSeconds: number;
+  }>;
+}
+
+// Sandbox Environment & Resiliency Engine Types
+export type EnvironmentMode = 'production' | 'sandbox';
+
+export interface SandboxChaosRule {
+  id: string;
+  name: string;
+  type: 'latency' | 'rate_limit' | 'service_unavailable' | 'token_expiry' | 'db_failover' | 'schema_drift';
+  enabled: boolean;
+  description: string;
+  impact: string;
+  statusCode?: number;
+  delayMs?: number;
+}
+
+export interface SandboxFeatureFlag {
+  key: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  rolloutPercentage: number;
+  environment: 'all' | 'sandbox_only';
+  targetAudience: string;
+  conversionImpactEstimate: string;
+  churnRiskEstimate: string;
+}
+
+export interface SandboxTelemetryEvent {
+  id: string;
+  timestamp: string;
+  event: string;
+  status: 'success' | 'warn' | 'error';
+  persona: string;
+  latencyMs: number;
+  details: string;
+  endpoint: string;
+}
+
+export interface SandboxWebhook {
+  id: string;
+  name: string;
+  targetService: 'Jira' | 'Slack' | 'GitHub' | 'Linear' | 'DataDog' | 'PagerDuty';
+  event: string;
+  targetUrl: string;
+  lastDispatchedAt?: string;
+  lastStatus?: 'success' | 'failed';
+  lastStatusCode?: number;
+  lastLatencyMs?: number;
+  payloadSample: string;
+}
+
+export type WebhookEventType = 
+  | 'prd.generated' 
+  | 'prd.updated' 
+  | 'user_stories.generated' 
+  | 'user_stories.updated' 
+  | 'sprint.planned' 
+  | 'sprint.updated';
+
+export interface AppWebhook {
+  id: string;
+  name: string;
+  url: string;
+  secret?: string;
+  enabled: boolean;
+  events: WebhookEventType[];
+  targetService: 'Jira' | 'Slack' | 'GitHub' | 'Linear' | 'Discord' | 'Custom';
+  createdAt: string;
+  updatedAt: string;
+  lastDispatchedAt?: string;
+  lastStatus?: 'success' | 'failed' | null;
+  lastStatusCode?: number | null;
+  lastLatencyMs?: number | null;
+  deliveriesCount: number;
+  failureCount: number;
+}
+
+export interface WebhookDeliveryLog {
+  id: string;
+  webhookId: string;
+  webhookName: string;
+  event: WebhookEventType;
+  url: string;
+  status: 'success' | 'failed';
+  statusCode: number;
+  latencyMs: number;
+  timestamp: string;
+  requestPayload: any;
+  responseBody?: string;
+  signature?: string;
+}
+
+export interface WebhooksOverviewStats {
+  totalWebhooks: number;
+  activeWebhooks: number;
+  totalDeliveries: number;
+  successRate: number;
+  subscribedEventsCount: number;
+}
+
+export interface SandboxPreFlightCheck {
+  id: string;
+  name: string;
+  category: 'Schema' | 'Resiliency' | 'Security' | 'Performance' | 'Quality';
+  passed: boolean;
+  severity: 'critical' | 'high' | 'medium';
+  details: string;
+}
+
+export interface SandboxStatus {
+  mode: EnvironmentMode;
+  virtualUsersCount: number;
+  rps: number;
+  p95LatencyMs: number;
+  errorRate: number;
+  chaosModeActive: boolean;
+  activeRulesCount: number;
+  chaosRules: SandboxChaosRule[];
+  featureFlags: SandboxFeatureFlag[];
+  webhooks: SandboxWebhook[];
+  recentTelemetry: SandboxTelemetryEvent[];
+  preFlightChecks: SandboxPreFlightCheck[];
+  lastPromotedAt?: string;
+  lastSnapshotAt?: string;
+}
+
+export interface ServiceHealthItem {
+  id: string;
+  name: string;
+  endpoint: string;
+  status: 'operational' | 'degraded' | 'down';
+  latencyMs: number;
+  uptime: string;
+  statusCode: number;
+  description: string;
+  lastChecked: string;
+}
+
+export interface ApiHealthMetrics {
+  gemini: {
+    status: 'operational' | 'degraded' | 'quota_exhausted';
+    hasApiKey: boolean;
+    keyMasked: string;
+    model: string;
+    tier: string;
+    isQuotaExhausted: boolean;
+    quotaExhaustedUntil: string | null;
+    currentLatencyMs: number;
+    p50LatencyMs: number;
+    p95LatencyMs: number;
+    p99LatencyMs: number;
+    rateLimitRpm: number;
+    rateLimitTpm: number;
+    quotaUsageDailyPercent: number;
+    totalRequests24h: number;
+    successRate: number;
+  };
+  services: ServiceHealthItem[];
+  latencyTrend: Array<{ timestamp: string; geminiMs: number; backendMs: number }>;
+  statusCodeDistribution: {
+    '2xx': number;
+    '4xx': number;
+    '5xx': number;
+  };
+  productionReadinessScore: number;
+  readinessChecks: Array<{
+    name: string;
+    passed: boolean;
+    metric: string;
+    threshold: string;
+  }>;
+}
+
+export interface DatabaseTableMeta {
+  tableName: string;
+  rowCount: number;
+  columns: Array<{ name: string; type: string; isPrimary?: boolean; isForeign?: boolean }>;
+  description: string;
+}
+
+export interface DatabaseStatusResponse {
+  engine: string;
+  host: string;
+  region: string;
+  connected: boolean;
+  poolActive: boolean;
+  poolMax: number;
+  queryLatencyMs: number;
+  tables: DatabaseTableMeta[];
+  authBridge: {
+    provider: string;
+    currentUserEmail: string;
+    rlsStatus: string;
+    supabaseCompatibility: boolean;
+    anonKeyMasked: string;
+    serviceKeyConfigured: boolean;
+  };
+  firestoreSync: {
+    status: 'online' | 'connecting' | 'offline';
+    databaseId: string;
+    projectId: string;
+    lastSyncedAt: string;
+  };
+}
+
+export interface SqlQueryResult {
+  success: boolean;
+  query: string;
+  latencyMs: number;
+  rowCount: number;
+  columns: string[];
+  rows: any[];
+  error?: string;
+}
+
+
+
+

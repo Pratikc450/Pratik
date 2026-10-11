@@ -35,7 +35,9 @@ import {
   ShieldCheck,
   GitBranch,
   Gauge,
-  History
+  History,
+  MessageSquare,
+  Kanban
 } from 'lucide-react';
 import { Product, GeneratedArtifact } from '../types.js';
 import { 
@@ -58,6 +60,8 @@ import { SprintVelocityPredictor } from './SprintVelocityPredictor.js';
 import { StoryDependencyMapperModal } from './StoryDependencyMapperModal.js';
 import { AiRiceSuggestionEngineModal } from './AiRiceSuggestionEngineModal.js';
 import { StoryVersionHistoryModal } from './StoryVersionHistoryModal.js';
+import { ArtifactCommentDrawer } from './ArtifactCommentDrawer.js';
+import { KanbanBoard } from './KanbanBoard.js';
 
 interface UserStoryListViewProps {
   selectedProductId: string;
@@ -210,8 +214,8 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
   // Bulk Selection State for Merged Markdown Export
   const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
 
-  // View Mode: Standard Flat List vs Functional Modules (AI Clustered)
-  const [viewMode, setViewMode] = useState<'FLAT' | 'MODULES'>('FLAT');
+  // View Mode: Standard Flat List vs Functional Modules (AI Clustered) vs Kanban Board
+  const [viewMode, setViewMode] = useState<'FLAT' | 'MODULES' | 'KANBAN'>('FLAT');
   const [functionalModules, setFunctionalModules] = useState<any[]>([]);
   const [isClustering, setIsClustering] = useState<boolean>(false);
 
@@ -401,12 +405,27 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
 
   const [localStories, setLocalStories] = useState<any[]>(defaultStories);
 
+  // Comment Thread Drawer State
+  const [isCommentDrawerOpen, setIsCommentDrawerOpen] = useState(false);
+  const [commentDrawerTargetStoryId, setCommentDrawerTargetStoryId] = useState<string | undefined>(undefined);
+  const [commentCounts, setCommentCounts] = useState<{ total: number; open: number }>({ total: 0, open: 0 });
+
   useEffect(() => {
     fetch(`/api/products/${selectedProductId}`)
       .then(res => res.json())
       .then(data => {
         const storiesArt = (data.artifacts || []).find((a: any) => a.taskType === 'USER_STORIES');
         setStoriesArtifact(storiesArt || null);
+        if (storiesArt) {
+          fetch(`/api/artifacts/${storiesArt.id}/comments`)
+            .then(r => r.json())
+            .then(cData => {
+              if (cData.success) {
+                setCommentCounts({ total: cData.totalCount || 0, open: cData.openCount || 0 });
+              }
+            })
+            .catch(() => {});
+        }
         if (data.personas && Array.isArray(data.personas)) {
           setWorkspacePersonas(data.personas);
         }
@@ -1361,6 +1380,24 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
             {showNextBestActions ? <ChevronUp className="w-3 h-3 text-purple-400 ml-0.5" /> : <ChevronDown className="w-3 h-3 text-slate-400 ml-0.5" />}
           </button>
 
+          {/* Requirement & Story Comment Threads Button */}
+          <button
+            onClick={() => {
+              setCommentDrawerTargetStoryId(undefined);
+              setIsCommentDrawerOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all bg-purple-950/80 hover:bg-purple-900 text-purple-200 border-purple-800/80 shadow-sm cursor-pointer"
+            title="Open Story & Requirement Discussions"
+          >
+            <MessageSquare className="w-3.5 h-3.5 text-purple-400" />
+            <span>Discussions</span>
+            {commentCounts.total > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-purple-900 text-purple-300 border border-purple-700">
+                {commentCounts.total}
+              </span>
+            )}
+          </button>
+
           {/* Export Approved Backlog Actions */}
           <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-xl shadow-xs">
             {selectedStoryIds.length > 0 && (
@@ -1938,6 +1975,18 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                 AI Clustered
               </span>
             </button>
+            <button
+              onClick={() => setViewMode('KANBAN')}
+              className={`px-2.5 py-0.5 rounded-md transition-all flex items-center gap-1.5 ${
+                viewMode === 'KANBAN'
+                  ? 'bg-purple-600 text-white font-bold shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Interactive drag-and-drop Kanban workflow by current status (Backlog, In Progress, Review, Done)"
+            >
+              <Kanban className="w-3.5 h-3.5 text-purple-300" />
+              <span>Kanban Board</span>
+            </button>
           </div>
 
           {/* Version History Toggle Button */}
@@ -2479,6 +2528,18 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                     </button>
 
                     <button
+                      onClick={() => {
+                        setCommentDrawerTargetStoryId(story.id);
+                        setIsCommentDrawerOpen(true);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-purple-950/80 hover:bg-purple-900 text-purple-200 text-xs font-semibold border border-purple-800/80 flex items-center gap-1 transition-colors cursor-pointer"
+                      title={`Discuss ${story.id} requirement thread`}
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Discuss</span>
+                    </button>
+
+                    <button
                       onClick={() => setSelectedStory(story)}
                       className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1 transition-colors"
                       title="View Story Specification Details"
@@ -2941,6 +3002,17 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
           );
         }
 
+        if (viewMode === 'KANBAN') {
+          return (
+            <KanbanBoard
+              stories={localStories}
+              onUpdateStoryStatus={handleUpdateSingleStory}
+              onSelectStory={(story) => setSelectedStory(story)}
+              productName={activeProduct?.name}
+            />
+          );
+        }
+
         return (
           /* STANDARD FLAT LIST VIEW */
           <div className="space-y-4">
@@ -3223,6 +3295,27 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
         productName={activeProduct?.name}
         onRevert={handleRevertStory}
         isReverting={isRevertingStory}
+      />
+
+      {/* Requirement Comment Threads Drawer */}
+      <ArtifactCommentDrawer
+        isOpen={isCommentDrawerOpen}
+        onClose={() => {
+          setIsCommentDrawerOpen(false);
+          setCommentDrawerTargetStoryId(undefined);
+        }}
+        artifactId={storiesArtifact?.id || 'art_stories_banking'}
+        artifactTitle={storiesArtifact?.schemaData?.featureSummary || `${activeProduct?.name} User Story Backlog`}
+        taskType="USER_STORIES"
+        requirements={localStories.map((s: any) => ({
+          id: s.id,
+          label: `${s.id}: As a ${s.asA}, I want ${s.iWant}`,
+          category: s.persona
+        }))}
+        initialRequirementId={commentDrawerTargetStoryId}
+        onCommentCountChange={(total, open) => {
+          setCommentCounts({ total, open });
+        }}
       />
     </div>
   );

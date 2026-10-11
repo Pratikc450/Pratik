@@ -3,6 +3,20 @@ import { getGeminiClient, isGeminiQuotaExhausted, handleGeminiError } from './ge
 import { Modality } from '@google/genai';
 import { ChatRolePreset } from '../types.js';
 import { db } from './mockDb.js';
+import { validateBody } from './validationMiddleware.js';
+import {
+  GenerateAcceptanceScenariosSchema,
+  SimulateScenarioSchema,
+  SuggestRiceSchema,
+  EstimateKpiImpactSchema,
+  ConfidenceAuditSchema,
+  ImpactForecastSchema,
+  ClusterStoriesSchema,
+  DependencyMappingSchema,
+  RiceSuggestionsSchema,
+  SuggestEpicMappingSchema,
+  StoryRecommendationsSchema
+} from './schemas/index.js';
 
 export const aiRouter = Router();
 
@@ -39,8 +53,8 @@ aiRouter.post('/chat', async (req, res) => {
   }
 
   // Validate model selection per prompt instructions
-  const validModels = ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
-  const targetModel = validModels.includes(model) ? model : 'gemini-3.5-flash';
+  const validModels = ['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite'];
+  const targetModel = validModels.includes(model) ? model : 'gemini-3.8-flash';
   const systemInstruction = getRoleSystemInstruction(rolePreset, productName);
 
   try {
@@ -60,7 +74,11 @@ aiRouter.post('/chat', async (req, res) => {
       parts: [{ text: message }]
     });
 
-    const response = await ai.models.generateContent({
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Gemini API call timed out after 6000ms')), 6000)
+    );
+
+    const callPromise = ai.models.generateContent({
       model: targetModel,
       contents,
       config: {
@@ -68,6 +86,8 @@ aiRouter.post('/chat', async (req, res) => {
         temperature: 0.7
       }
     });
+
+    const response: any = await Promise.race([callPromise, timeoutPromise]);
 
     const replyText = response.text || "I've analyzed your product query. Let me know if you'd like me to draft formal acceptance criteria or break this into sprint epics.";
 
@@ -681,7 +701,7 @@ aiRouter.post('/generate-music', async (req, res) => {
 });
 
 // 8. AI QUICK AUTO-FILL RICE SCORES FOR USER STORIES
-aiRouter.post('/suggest-rice', async (req, res) => {
+aiRouter.post('/suggest-rice', validateBody(SuggestRiceSchema), async (req, res) => {
   const story = req.body.story || req.body;
   const productName = req.body.productName || (req.body.story && req.body.story.productName);
   const productContext = req.body.productContext || (req.body.story && req.body.story.productContext);
@@ -869,7 +889,7 @@ Suggest optimal baseline RICE metrics and concise justification for the PM.`;
 });
 
 // 9. AI NEXT BEST ACTION & STORY DEPENDENCY RECOMMENDATIONS
-aiRouter.post('/story-recommendations', async (req, res) => {
+aiRouter.post('/story-recommendations', validateBody(StoryRecommendationsSchema), async (req, res) => {
   const { stories = [], productName = 'ProductPilot', productContext = '' } = req.body;
 
   const getHeuristicRecommendations = () => {
@@ -1080,7 +1100,7 @@ Identify dependencies, semantic clusters, high-impact gaps, and recommended Next
 });
 
 // 10. AI SMART SUGGEST: EPIC MAPPING BASED ON NARRATIVE CONTEXT
-aiRouter.post('/suggest-epic-mapping', async (req, res) => {
+aiRouter.post('/suggest-epic-mapping', validateBody(SuggestEpicMappingSchema), async (req, res) => {
   const { stories = [], productName = 'ProductPilot', productContext = '' } = req.body;
 
   const getHeuristicEpicMapping = () => {
@@ -1225,7 +1245,7 @@ Group these stories into strategic product Epics based on their narrative intent
 });
 
 // 12. GENERATE REALISTIC END-TO-END TEST SCENARIOS GROUNDED IN PRODUCT USER STORIES
-aiRouter.post('/generate-acceptance-scenarios', async (req, res) => {
+aiRouter.post('/generate-acceptance-scenarios', validateBody(GenerateAcceptanceScenariosSchema), async (req, res) => {
   const { 
     productId, 
     coverageFocus = 'Comprehensive Journey', 
@@ -1746,7 +1766,7 @@ Respond with JSON conforming strictly to this format:
 });
 
 // 13. SIMULATE END-TO-END SCENARIO EXECUTION
-aiRouter.post('/simulate-scenario', async (req, res) => {
+aiRouter.post('/simulate-scenario', validateBody(SimulateScenarioSchema), async (req, res) => {
   const { scenarioId, scenarioTitle, steps = [] } = req.body;
   const start = Date.now();
 
@@ -1791,7 +1811,7 @@ aiRouter.post('/simulate-scenario', async (req, res) => {
 });
 
 // 14. AI KPI IMPACT PREVIEW ESTIMATION
-aiRouter.post('/estimate-kpi-impact', async (req, res) => {
+aiRouter.post('/estimate-kpi-impact', validateBody(EstimateKpiImpactSchema), async (req, res) => {
   const { story, stories, productName, productId } = req.body;
   const product = db.products.find(p => p.id === productId) || db.products[0];
 
@@ -1934,7 +1954,7 @@ ${JSON.stringify(targetStories.map(s => ({
 });
 
 // 15. AI CLUSTERING INTO FUNCTIONAL MODULES (BY THEME & PERSONA)
-aiRouter.post('/cluster-stories', async (req, res) => {
+aiRouter.post('/cluster-stories', validateBody(ClusterStoriesSchema), async (req, res) => {
   const { stories = [], productName, productId } = req.body;
   const product = db.products.find(p => p.id === productId) || db.products[0];
 
@@ -2069,7 +2089,7 @@ ${JSON.stringify(stories.map((s: any) => ({
 });
 
 // 16. AI CONFIDENCE AUDIT (GROUNDED IN HISTORICAL DELIVERY SPEED TELEMETRY)
-aiRouter.post('/confidence-audit', async (req, res) => {
+aiRouter.post('/confidence-audit', validateBody(ConfidenceAuditSchema), async (req, res) => {
   const { stories = [], productId, deliveryTelemetry } = req.body;
 
   const getHeuristicAudit = () => {
@@ -2237,7 +2257,7 @@ ${JSON.stringify(stories.map((s: any) => ({
 });
 
 // 17. AI IMPACT FORECAST (IMPLEMENTED VS. IGNORED SIMULATION)
-aiRouter.post('/impact-forecast', async (req, res) => {
+aiRouter.post('/impact-forecast', validateBody(ImpactForecastSchema), async (req, res) => {
   const { story, productId } = req.body;
   const s = story || {};
 
@@ -2363,7 +2383,7 @@ Evaluate financial lift, retention, operational friction, and opportunity cost o
 });
 
 // 18. AI STORY DEPENDENCY MAPPER & CRITICAL PATH BOTTLENECKS
-aiRouter.post('/dependency-mapping', async (req, res) => {
+aiRouter.post('/dependency-mapping', validateBody(DependencyMappingSchema), async (req, res) => {
   const { stories = [] } = req.body;
 
   const getHeuristicDependencies = () => {
@@ -2472,7 +2492,7 @@ ${JSON.stringify(stories.map((s: any) => ({
 });
 
 // 19. AI RICE SUGGESTION ENGINE (PERSONA-LINKED & HISTORICAL TRENDS)
-aiRouter.post('/rice-suggestions', async (req, res) => {
+aiRouter.post('/rice-suggestions', validateBody(RiceSuggestionsSchema), async (req, res) => {
   const { stories = [], personas = [], productId, historicalTrends } = req.body;
 
   const getHeuristicSuggestions = () => {

@@ -17,10 +17,13 @@ import {
   Layers,
   History,
   Tag,
-  FileDown
+  FileDown,
+  MessageSquare
 } from 'lucide-react';
 import { Product, GeneratedArtifact } from '../types.js';
 import { ArtifactDiffViewer, VersionOption } from './ArtifactDiffViewer.js';
+import { PrdVersionComparisonView } from './PrdVersionComparisonView.js';
+import { ArtifactCommentDrawer, RequirementAnchor } from './ArtifactCommentDrawer.js';
 import { exportArtifactPdf, exportToMarkdown } from '../utils/exportUtils.js';
 
 interface PrdListViewProps {
@@ -40,6 +43,9 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   
+  // View mode tab: 'documents' (cards/prose) | 'comparison' (side-by-side diff)
+  const [viewTab, setViewTab] = useState<'documents' | 'comparison'>('documents');
+
   // Interactive Version History Switcher State (artifactId -> versionNumber)
   const [selectedVersions, setSelectedVersions] = useState<Record<string, number>>({});
 
@@ -54,6 +60,35 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
   const [revisionSummary, setRevisionSummary] = useState('');
   const [isSubmittingRevision, setIsSubmittingRevision] = useState(false);
 
+  // Comment Thread Drawer State
+  const [isCommentDrawerOpen, setIsCommentDrawerOpen] = useState(false);
+  const [commentDrawerArtifact, setCommentDrawerArtifact] = useState<GeneratedArtifact | null>(null);
+  const [commentDrawerTargetReqId, setCommentDrawerTargetReqId] = useState<string | undefined>(undefined);
+  const [commentCounts, setCommentCounts] = useState<Record<string, { total: number; open: number }>>({});
+
+  const loadCommentCounts = async (prds: GeneratedArtifact[]) => {
+    for (const prd of prds) {
+      try {
+        const res = await fetch(`/api/artifacts/${prd.id}/comments`);
+        if (res.ok) {
+          const data = await res.json();
+          setCommentCounts(prev => ({
+            ...prev,
+            [prd.id]: { total: data.totalCount || 0, open: data.openCount || 0 }
+          }));
+        }
+      } catch (err) {
+        console.warn('Could not load comment count', err);
+      }
+    }
+  };
+
+  const handleOpenComments = (prd: GeneratedArtifact, reqId?: string) => {
+    setCommentDrawerArtifact(prd);
+    setCommentDrawerTargetReqId(reqId);
+    setIsCommentDrawerOpen(true);
+  };
+
   const fetchPrds = () => {
     setLoading(true);
     fetch(`/api/products/${selectedProductId}`)
@@ -65,6 +100,7 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
           setSelectedPrdId(prds[0].id);
         }
         setLoading(false);
+        loadCommentCounts(prds);
       })
       .catch(() => setLoading(false));
   };
@@ -126,6 +162,7 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
       setDiffVersionA(vA ?? 1);
       setDiffVersionB(vB ?? prd.version);
     }
+    setViewTab('comparison');
     setIsDiffOpen(true);
   };
 
@@ -243,20 +280,20 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
           {artifacts.length > 0 && (
             <button
               onClick={() => {
-                if (isDiffOpen) {
-                  setIsDiffOpen(false);
+                if (viewTab === 'comparison') {
+                  setViewTab('documents');
                 } else if (activePrd) {
                   handleOpenDiff(activePrd);
                 }
               }}
               className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition-all border ${
-                isDiffOpen
+                viewTab === 'comparison'
                   ? 'bg-indigo-600 text-white border-indigo-500 shadow-indigo-500/20'
                   : 'bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border-indigo-800/80'
               }`}
             >
               <GitCompare className="w-3.5 h-3.5" />
-              <span>{isDiffOpen ? 'Close Diff View' : 'Compare Versions (Diff)'}</span>
+              <span>{viewTab === 'comparison' ? 'Switch to Document View' : 'Version Comparison (Diff)'}</span>
             </button>
           )}
 
@@ -270,22 +307,64 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
         </div>
       </div>
 
-      {/* Side-by-Side Diff Section (Toggled) */}
-      {isDiffOpen && activePrd && availableVersions.length > 0 && (
-        <div className="transition-all animate-in fade-in duration-300">
-          <ArtifactDiffViewer
-            taskType="PRD"
-            productName={activeProduct?.name || 'Active Product'}
-            versions={availableVersions}
+      {/* Primary Sub-Tab Switcher */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+        <div className="flex items-center space-x-1">
+          <button
+            onClick={() => setViewTab('documents')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all ${
+              viewTab === 'documents'
+                ? 'bg-slate-800 text-slate-100 shadow-sm border border-slate-700'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 text-emerald-400" />
+            <span>All PRD Specifications ({artifacts.length})</span>
+          </button>
+          <button
+            onClick={() => setViewTab('comparison')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all ${
+              viewTab === 'comparison'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <GitCompare className="w-3.5 h-3.5" />
+            <span>Side-by-Side Version Comparison</span>
+            {availableVersions.length > 1 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-indigo-950 text-indigo-200 border border-indigo-700">
+                {availableVersions.length} iterations
+              </span>
+            )}
+          </button>
+        </div>
+
+        {viewTab === 'comparison' && (
+          <div className="text-xs text-slate-400 font-mono flex items-center gap-2 px-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>Synchronized Diff: Base Iteration vs. Comparison Iteration</span>
+          </div>
+        )}
+      </div>
+
+      {/* Main View: Either Side-by-Side Version Comparison View OR PRD Cards */}
+      {viewTab === 'comparison' && activeProduct ? (
+        <div className="animate-in fade-in duration-300">
+          <PrdVersionComparisonView
+            product={activeProduct}
+            artifacts={artifacts}
+            initialArtifactId={selectedPrdId || activePrd?.id}
             initialVersionA={diffVersionA}
             initialVersionB={diffVersionB}
-            onClose={() => setIsDiffOpen(false)}
-            onCreateRevision={() => setIsRevisionModalOpen(true)}
+            onClose={() => setViewTab('documents')}
+            onCreateRevision={(artId) => {
+              setSelectedPrdId(artId);
+              setIsRevisionModalOpen(true);
+            }}
           />
         </div>
-      )}
-
-      {/* PRD Card / List */}
+      ) : (
+      /* PRD Card / List */
       <div className="space-y-4">
         {loading ? (
           <div className="p-8 text-center text-slate-500 text-xs">Loading specifications...</div>
@@ -366,6 +445,21 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {/* Discuss Specification Thread */}
+                    <button
+                      onClick={() => handleOpenComments(art)}
+                      className="px-3 py-2 rounded-xl bg-purple-950/80 hover:bg-purple-900 text-purple-200 border border-purple-800/80 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer"
+                      title="Open Requirement Discussion Threads"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Discuss</span>
+                      {commentCounts[art.id]?.total > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-purple-900 text-purple-300 border border-purple-700">
+                          {commentCounts[art.id].total}
+                        </span>
+                      )}
+                    </button>
+
                     {/* Compare Versions Action */}
                     <button
                       onClick={() => handleOpenDiff(art, selectedVersionNum, art.version)}
@@ -498,8 +592,8 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                      {functionalReqs.slice(0, 4).map((req: any, i: number) => (
-                        <div key={i} className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 text-xs flex flex-col justify-between">
+                      {functionalReqs.map((req: any, i: number) => (
+                        <div key={i} className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 text-xs flex flex-col justify-between hover:border-slate-700 transition-colors">
                           <div>
                             <div className="flex items-center justify-between font-semibold text-slate-200 mb-1">
                               <span className="font-mono text-[11px] text-slate-400">{req.id}</span>
@@ -515,6 +609,16 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
                               {req.requirement || req.description}
                             </p>
                           </div>
+                          <div className="mt-2.5 pt-2 border-t border-slate-900 flex items-center justify-between">
+                            <button
+                              onClick={() => handleOpenComments(art, req.id)}
+                              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/60 text-[10px] font-semibold transition-colors cursor-pointer"
+                              title={`Discuss requirement ${req.id}`}
+                            >
+                              <MessageSquare className="w-3 h-3 text-indigo-400" />
+                              <span>Discuss {req.id}</span>
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -525,6 +629,7 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
           })
         )}
       </div>
+      )}
 
       {/* Create Revision Modal */}
       {isRevisionModalOpen && (
@@ -580,6 +685,40 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Requirement Comment Threads Drawer */}
+      {commentDrawerArtifact && (
+        <ArtifactCommentDrawer
+          isOpen={isCommentDrawerOpen}
+          onClose={() => {
+            setIsCommentDrawerOpen(false);
+            setCommentDrawerArtifact(null);
+            setCommentDrawerTargetReqId(undefined);
+          }}
+          artifactId={commentDrawerArtifact.id}
+          artifactTitle={commentDrawerArtifact.schemaData?.title || `${activeProduct?.name} PRD`}
+          taskType="PRD"
+          requirements={[
+            ...(commentDrawerArtifact.schemaData?.functionalRequirements || []).map((fr: any) => ({
+              id: fr.id,
+              label: `${fr.id}: ${fr.requirement || fr.description}`,
+              category: fr.priority
+            })),
+            { id: 'OBJECTIVE', label: 'Executive Objective' },
+            { id: 'MVP_SCOPE', label: 'MVP Scope & Boundaries' },
+            { id: 'NON_FUNCTIONAL', label: 'Non-Functional SLAs' }
+          ]}
+          initialRequirementId={commentDrawerTargetReqId}
+          onCommentCountChange={(total, open) => {
+            if (commentDrawerArtifact) {
+              setCommentCounts(prev => ({
+                ...prev,
+                [commentDrawerArtifact.id]: { total, open }
+              }));
+            }
+          }}
+        />
       )}
     </div>
   );

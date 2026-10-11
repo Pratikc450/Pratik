@@ -8,6 +8,7 @@ import {
 } from '../types.js';
 import { PipelineStepper, PipelineStep } from './PipelineStepper.js';
 import { DocumentViewer } from './DocumentViewer.js';
+import { TokenCostEstimator } from './TokenCostEstimator.js';
 import {
   Sparkles,
   Layers,
@@ -569,7 +570,13 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
         </div>
       </div>
 
-      {/* 2. PRODUCT BRIEF INGESTION CARD (SUITE MODE) */}
+      {/* 2. TOKEN COST ESTIMATOR & GEMINI PRICING PROJECTION */}
+      <TokenCostEstimator
+        artifacts={artifacts}
+        currentArtifact={activeArtifact}
+      />
+
+      {/* 3. PRODUCT BRIEF INGESTION CARD (SUITE MODE) */}
       {workbenchMode === 'suite' ? (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-7 space-y-6 shadow-xl">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800 pb-5">

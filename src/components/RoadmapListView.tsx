@@ -23,11 +23,14 @@ import {
   Sliders,
   BarChart3,
   Target,
-  Zap
+  Zap,
+  FileSpreadsheet,
+  ChevronDown
 } from 'lucide-react';
 import { Product, GeneratedArtifact } from '../types.js';
 import { ArtifactDiffViewer, VersionOption } from './ArtifactDiffViewer.js';
-import { exportArtifactPdf, exportToMarkdown } from '../utils/exportUtils.js';
+import { exportArtifactPdf, exportToMarkdown, exportRoadmapToCsv, RoadmapCsvFormat } from '../utils/exportUtils.js';
+import { RoadmapGenerator } from './RoadmapGenerator.js';
 
 interface RoadmapListViewProps {
   selectedProductId: string;
@@ -46,6 +49,11 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // CSV Export state
+  const [csvFormat, setCsvFormat] = useState<RoadmapCsvFormat>('universal');
+  const [isCsvMenuOpen, setIsCsvMenuOpen] = useState(false);
+  const [csvDownloaded, setCsvDownloaded] = useState(false);
+
   // Diff View State
   const [isDiffOpen, setIsDiffOpen] = useState(false);
   const [diffVersionA, setDiffVersionA] = useState<number>(1);
@@ -59,6 +67,10 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
 
   // AI Roadmap Visualizer (Gantt-Style Timeline) State
   const [roadmapViewMode, setRoadmapViewMode] = useState<'HORIZONS' | 'GANTT_TIMELINE'>('HORIZONS');
+
+  // AI Roadmap Generator Modal State
+  const [isRoadmapGeneratorOpen, setIsRoadmapGeneratorOpen] = useState(false);
+  const [generatorToast, setGeneratorToast] = useState<string | null>(null);
 
   // AI Sprint Scheduler State
   const [isSprintSchedulerOpen, setIsSprintSchedulerOpen] = useState(false);
@@ -156,6 +168,13 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
       approvedBy: rm.metadata?.approvedBy,
       approvedAt: rm.metadata?.approvedAt
     });
+  };
+
+  const handleExportCsv = (rm: GeneratedArtifact, format: RoadmapCsvFormat = csvFormat) => {
+    exportRoadmapToCsv(rm, activeProduct?.name || 'Active Product', format);
+    setIsCsvMenuOpen(false);
+    setCsvDownloaded(true);
+    setTimeout(() => setCsvDownloaded(false), 2500);
   };
 
   const handleCreateRevision = async () => {
@@ -261,6 +280,86 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
           {/* Export Approved Roadmap Action */}
           {activeRoadmap && (
             <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-xl">
+              {/* Download as CSV (Jira / Asana import) Button with quick format dropdown */}
+              <div className="relative">
+                <div className="inline-flex rounded-lg shadow-xs">
+                  <button
+                    onClick={() => handleExportCsv(activeRoadmap, csvFormat)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-l-lg bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 text-xs font-semibold border border-emerald-800/80 transition-colors"
+                    title="Download Roadmap as CSV formatted for Jira / Asana import"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>{csvDownloaded ? 'Downloaded!' : 'Download as CSV'}</span>
+                  </button>
+                  <button
+                    onClick={() => setIsCsvMenuOpen(!isCsvMenuOpen)}
+                    className="px-1.5 py-1.5 rounded-r-lg bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs border border-l-0 border-emerald-800/80 transition-colors"
+                    title="Select CSV format (Universal, Jira, or Asana)"
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {isCsvMenuOpen && (
+                  <div className="absolute left-0 mt-1.5 w-60 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl z-30 p-1.5 space-y-1 animate-in fade-in">
+                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Choose CSV Import Target
+                    </div>
+                    <button
+                      onClick={() => {
+                        setCsvFormat('universal');
+                        handleExportCsv(activeRoadmap, 'universal');
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                        csvFormat === 'universal'
+                          ? 'bg-emerald-500/20 text-emerald-300 font-semibold'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div>
+                        <div className="font-medium">Universal (Jira & Asana)</div>
+                        <div className="text-[10px] text-slate-400">Auto-detected by Jira & Asana wizards</div>
+                      </div>
+                      {csvFormat === 'universal' && <Check className="w-3 h-3 text-emerald-400" />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCsvFormat('jira');
+                        handleExportCsv(activeRoadmap, 'jira');
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                        csvFormat === 'jira'
+                          ? 'bg-emerald-500/20 text-emerald-300 font-semibold'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div>
+                        <div className="font-medium">Jira Import Format</div>
+                        <div className="text-[10px] text-slate-400">Summary, Fix Version, Epic, Estimate</div>
+                      </div>
+                      {csvFormat === 'jira' && <Check className="w-3 h-3 text-emerald-400" />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCsvFormat('asana');
+                        handleExportCsv(activeRoadmap, 'asana');
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                        csvFormat === 'asana'
+                          ? 'bg-emerald-500/20 text-emerald-300 font-semibold'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div>
+                        <div className="font-medium">Asana Import Format</div>
+                        <div className="text-[10px] text-slate-400">Section/Horizon, Task Name, Priority</div>
+                      </div>
+                      {csvFormat === 'asana' && <Check className="w-3 h-3 text-emerald-400" />}
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={() => handleExportPdf(activeRoadmap)}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 text-rose-200 text-xs font-semibold border border-rose-800/80 transition-colors shadow-xs"
@@ -302,14 +401,29 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
           )}
 
           <button
-            onClick={() => onNavigateTab('ai-workspace')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors"
+            onClick={() => setIsRoadmapGeneratorOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-md shadow-indigo-950/50 transition-all transform active:scale-95 cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Generate Roadmap</span>
+            <span>AI Roadmap Generator</span>
+          </button>
+
+          <button
+            onClick={() => onNavigateTab('ai-workspace')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold shadow-sm transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+            <span>Full Workspace Suite</span>
           </button>
         </div>
       </div>
+
+      {generatorToast && (
+        <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>{generatorToast}</span>
+        </div>
+      )}
 
       {/* Side-by-Side Diff Section (Toggled) */}
       {isDiffOpen && activeRoadmap && availableVersions.length > 0 && (
@@ -371,6 +485,16 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
             >
               <Plus className="w-3.5 h-3.5" />
               <span>New Revision</span>
+            </button>
+
+            {/* Download as CSV Action */}
+            <button
+              onClick={() => handleExportCsv(activeRoadmap, csvFormat)}
+              className="px-3 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 border border-emerald-800/80 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
+              title="Download Roadmap as CSV for Jira or Asana import"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{csvDownloaded ? 'Downloaded CSV!' : 'Download as CSV'}</span>
             </button>
 
             <button
@@ -533,6 +657,23 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* AI Roadmap Generator Modal */}
+      {isRoadmapGeneratorOpen && (
+        <RoadmapGenerator
+          productId={selectedProductId}
+          product={activeProduct}
+          isModal={true}
+          onClose={() => setIsRoadmapGeneratorOpen(false)}
+          onRoadmapCommitted={(art) => {
+            setGeneratorToast(`Quarterly Roadmap v${art.version} committed to active workspace!`);
+            setTimeout(() => setGeneratorToast(null), 4000);
+            fetchRoadmaps();
+            setIsRoadmapGeneratorOpen(false);
+          }}
+          onNavigateTab={onNavigateTab}
+        />
       )}
     </div>
   );

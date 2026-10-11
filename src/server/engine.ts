@@ -2,6 +2,11 @@ import { db } from './mockDb.js';
 import { gatherContextForTask } from './contextGatherer.js';
 import { PROMPT_TEMPLATES } from './promptTemplates.js';
 import { SchemaRegistry } from './schemas.js';
+import {
+  getArtifactSchema,
+  getLatestSchemaVersion,
+  validateArtifactAnyVersion
+} from './schemas/versions/registry.js';
 import { renderArtifactToProse } from './renderer.js';
 import { getGeminiClient, MODELS, isGeminiQuotaExhausted, markQuotaExhausted } from './geminiClient.js';
 import { synthesizeDomainArtifact } from './syntheticGenerator.js';
@@ -16,6 +21,7 @@ export interface GenerationRequest {
   productId: string;
   taskType: ArtifactType;
   userRequest: string;
+  schemaVersion?: number | string;
   featureId?: string;
   modelOverride?: string;
   simulateMalformedFirstPass?: boolean; // For acceptance test 6
@@ -250,10 +256,11 @@ export async function runGenerationPipeline(req: GenerationRequest): Promise<Gen
   }
 
   // 6. Step 4: Strict Schema Validation (§4)
-  emit('validation', `[5/7 VALIDATION] Parsing and validating output against Zod schema for ${req.taskType}...`);
+  const targetSchemaVersion = req.schemaVersion ? Number(req.schemaVersion) : getLatestSchemaVersion(req.taskType);
+  emit('validation', `[5/7 VALIDATION] Parsing and validating output against Zod schema for ${req.taskType} (Schema v${targetSchemaVersion})...`);
   validationAttempts = 1;
 
-  const schema = SchemaRegistry[req.taskType];
+  const schema = getArtifactSchema(req.taskType, targetSchemaVersion);
   let validatedData: any = null;
   let validationErrorMsg = '';
 
@@ -264,13 +271,24 @@ export async function runGenerationPipeline(req: GenerationRequest): Promise<Gen
         clean = clean.replace(/^```(json)?\n?/, '').replace(/```$/, '').trim();
       }
       const parsed = JSON.parse(clean);
+
+      // 1. Try target requested schema version
       const result = schema.safeParse(parsed);
       if (result.success) {
         return { success: true, data: result.data };
-      } else {
-        const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
-        return { success: false, error: issues };
       }
+
+      // 2. Compatibility check: validate against any supported schema version and auto-migrate if needed
+      const versionResult = validateArtifactAnyVersion(req.taskType, parsed, true);
+      if (versionResult.success) {
+        if (versionResult.migrated) {
+          emit('validation', `[SCHEMA MIGRATION] Legacy v${versionResult.detectedVersion} output detected; auto-migrated to v${versionResult.targetVersion} schema without breaking legacy data models.`);
+        }
+        return { success: true, data: versionResult.data };
+      }
+
+      const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
+      return { success: false, error: issues };
     } catch (e: any) {
       return { success: false, error: `Invalid JSON format: ${e.message}` };
     }
@@ -398,7 +416,8 @@ Fix only the fields listed above to satisfy the strict schema contract. Keep eve
     createdAt: new Date().toISOString(),
     requestId: req.requestId,
     tokenBudgetUsed: db.tokenBudgetUsed,
-    tokenBudgetLimit: db.tokenBudgetLimit
+    tokenBudgetLimit: db.tokenBudgetLimit,
+    schemaVersion: targetSchemaVersion
   };
 
   // 9. Step 7: Render prose (§1 & §4)
@@ -412,6 +431,7 @@ Fix only the fields listed above to satisfy the strict schema contract. Keep eve
     taskType: req.taskType,
     status: 'DRAFT', // Always DRAFT until human approval
     version: 1,
+    schemaVersion: targetSchemaVersion,
     schemaData: validatedData,
     renderedMarkdown,
     metadata,

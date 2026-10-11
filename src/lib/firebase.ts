@@ -19,7 +19,10 @@ import {
   getDocFromServer 
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { UserProfile, GeneratedArtifact, AiImageResult, MusicTrackResult, AiVideoResult, AudioTranscriptResult } from '../types.js';
+import { UserProfile, GeneratedArtifact, AiImageResult, MusicTrackResult, AiVideoResult, AudioTranscriptResult, ArtifactComment, Product } from '../types.js';
+
+// Export configured database ID
+export const FIRESTORE_DATABASE_ID = firebaseConfig.firestoreDatabaseId || '(default)';
 
 // Initialize Firebase App singleton
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -142,3 +145,92 @@ export async function persistAiAssetToFirestore(
     console.warn("Failed to persist AI asset to Firestore", err);
   }
 }
+
+export async function persistCommentToFirestore(userId: string, comment: ArtifactComment): Promise<void> {
+  try {
+    const commentRef = doc(firestore, 'users', userId, 'artifacts', comment.artifactId, 'comments', comment.id);
+    await setDoc(commentRef, {
+      ...comment,
+      userId,
+      syncedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.warn("Failed to persist comment to Firestore", err);
+  }
+}
+
+export async function fetchCommentsFromFirestore(userId: string, artifactId: string): Promise<ArtifactComment[]> {
+  try {
+    const commentsRef = collection(firestore, 'users', userId, 'artifacts', artifactId, 'comments');
+    const q = query(commentsRef, orderBy('createdAt', 'asc'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => d.data() as ArtifactComment);
+  } catch (err) {
+    console.warn("Could not fetch comments from Firestore", err);
+    return [];
+  }
+}
+
+export async function updateCommentInFirestore(userId: string, artifactId: string, commentId: string, updates: Partial<ArtifactComment>): Promise<void> {
+  try {
+    const commentRef = doc(firestore, 'users', userId, 'artifacts', artifactId, 'comments', commentId);
+    await setDoc(commentRef, updates, { merge: true });
+  } catch (err) {
+    console.warn("Could not update comment in Firestore", err);
+  }
+}
+
+export async function persistProductToFirestore(userId: string, product: Product): Promise<void> {
+  try {
+    const productRef = doc(firestore, 'users', userId, 'products', product.id);
+    await setDoc(productRef, {
+      ...product,
+      userId,
+      syncedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.warn("Could not persist product to Firestore", err);
+  }
+}
+
+export async function fetchUserProductsFromFirestore(userId: string): Promise<Product[]> {
+  try {
+    const productsRef = collection(firestore, 'users', userId, 'products');
+    const q = query(productsRef, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => d.data() as Product);
+  } catch (err) {
+    console.warn("Could not fetch products from Firestore", err);
+    return [];
+  }
+}
+
+export async function syncFullWorkspaceToFirestore(
+  userId: string, 
+  products: Product[], 
+  artifacts: GeneratedArtifact[]
+): Promise<{ productsSynced: number; artifactsSynced: number }> {
+  let productsSynced = 0;
+  let artifactsSynced = 0;
+
+  for (const prod of products) {
+    try {
+      await persistProductToFirestore(userId, prod);
+      productsSynced++;
+    } catch (e) {
+      console.warn("Failed syncing product", prod.id, e);
+    }
+  }
+
+  for (const art of artifacts) {
+    try {
+      await persistArtifactToFirestore(userId, art);
+      artifactsSynced++;
+    } catch (e) {
+      console.warn("Failed syncing artifact", art.id, e);
+    }
+  }
+
+  return { productsSynced, artifactsSynced };
+}
+

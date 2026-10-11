@@ -213,23 +213,62 @@ ${existingStoriesArtifact.schemaData.stories.map((s: any) => `- As a ${s.asA}, I
 }
 
 // 3. Dedicated Context Gatherer for Roadmap
-export function gatherRoadmapContext(productId: string): GatheredContextResult {
+export function gatherRoadmapContext(productId: string, userRequest?: string): GatheredContextResult {
   const product = db.getProduct(productId);
   if (!product) throw new Error(`Product ${productId} not found.`);
 
   const features = db.getFeatures(productId);
   const problems = db.getProblems(productId);
 
-  const sections = [
-    `PRODUCT VISION & STRATEGY:\nName: ${product.name}\nVision: ${product.vision}\nDescription: ${product.description}`,
-    `CORE PROBLEMS TO SOLVE:\n${problems.map(p => `- [Impact ${p.impactScore}/10] ${p.title}: ${p.description}`).join('\n')}`,
-    `FEATURE INVENTORY CANDIDATES:\n${features.map(f => `- [Priority: ${f.priority}] ${f.title}: ${f.description}`).join('\n')}`
+  // Active PRDs for this product
+  const prdArtifacts = Array.from(db.artifacts.values())
+    .filter(a => a.productId === productId && a.taskType === 'PRD');
+  const activePrd = prdArtifacts[prdArtifacts.length - 1];
+
+  // Active User Stories for this product
+  const storyArtifacts = Array.from(db.artifacts.values())
+    .filter(a => a.productId === productId && a.taskType === 'USER_STORIES');
+  const activeStories = storyArtifacts[storyArtifacts.length - 1];
+  const sprintStories = db.getSprintStories(productId);
+
+  const sections: string[] = [
+    `PRODUCT VISION & STRATEGY:\nName: ${product.name}\nVision: ${product.vision}\nDescription: ${product.description}`
   ];
 
-  const fullContext = sections.join('\n\n');
+  if (activePrd && activePrd.schemaData) {
+    const prdData = activePrd.schemaData;
+    const reqs = prdData.functionalRequirements || [];
+    const mvp = prdData.mvpScope || [];
+    const nonFunctional = prdData.nonFunctionalRequirements || [];
+    sections.push(`ACTIVE PRODUCT REQUIREMENTS DOCUMENT (PRD v${activePrd.version}):
+Title: ${prdData.title || product.name}
+Objective: ${prdData.objective || 'N/A'}
+MVP In-Scope: ${mvp.join(', ') || 'Core capabilities'}
+Non-Functional SLAs: ${nonFunctional.join(', ') || 'p95 < 400ms'}
+Functional Requirements (MoSCoW Prioritized):
+${reqs.map((r: any) => `- [${r.priority || 'MUST'}] ${r.id}: ${r.requirement || r.title}`).join('\n')}`);
+  }
+
+  if (activeStories && activeStories.schemaData) {
+    const storyList = activeStories.schemaData.stories || [];
+    sections.push(`ACTIVE USER STORIES & AGILE BACKLOG:
+${storyList.map((s: any) => `- Story ${s.id || ''}: As a ${s.asA}, I want ${s.iWant} so that ${s.soThat} (RICE Score: ${s.riceScore || 'N/A'}, Effort: ${s.effort || '2'} wks, Persona: ${s.persona || 'User'})`).join('\n')}`);
+  } else if (sprintStories.length > 0) {
+    sections.push(`ACTIVE SPRINT USER STORIES:
+${sprintStories.map((s: any) => `- Story: As a ${s.asA}, I want ${s.iWant} so that ${s.soThat} (Status: ${s.status}, Effort: ${s.effortWeeks || '2'} wks)`).join('\n')}`);
+  }
+
+  sections.push(`CORE PROBLEMS TO SOLVE:\n${problems.map(p => `- [Impact ${p.impactScore}/10] ${p.title}: ${p.description}`).join('\n')}`);
+  sections.push(`FEATURE INVENTORY CANDIDATES:\n${features.map(f => `- [Priority: ${f.priority}] ${f.title}: ${f.description}`).join('\n')}`);
+
+  if (userRequest) {
+    sections.push(`CUSTOM ROADMAP INSTRUCTIONS & CONSTRAINTS:\n${userRequest}`);
+  }
+
+  const fullContext = sections.join('\n\n════════════════════════════════════════\n\n');
   return {
     contextString: fullContext,
-    itemCount: 1 + problems.length + features.length,
+    itemCount: 1 + problems.length + features.length + (activePrd ? 1 : 0) + (activeStories ? 1 : 0),
     estimatedTokens: estimateTokens(fullContext),
     isCached: false
   };
@@ -317,7 +356,7 @@ export function gatherContextForTask(
     case 'USER_STORIES':
       return gatherUserStoriesContext(productId, featureId, userRequest);
     case 'ROADMAP':
-      return gatherRoadmapContext(productId);
+      return gatherRoadmapContext(productId, userRequest);
     case 'USER_PERSONAS':
     case 'PERSONAS':
       return gatherPersonasContext(productId);

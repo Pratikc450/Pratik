@@ -11,18 +11,33 @@ import {
   Settings,
   ChevronRight,
   ShieldCheck,
-  Bot
+  Bot,
+  Terminal,
+  History,
+  Zap,
+  FlaskConical,
+  Activity,
+  Database,
+  Radio
 } from 'lucide-react';
 
 export type NavigationTab = 
   | 'dashboard' 
   | 'projects' 
   | 'ai-workspace' 
+  | 'real-time-solver'
   | 'prds' 
   | 'roadmaps' 
   | 'stories' 
   | 'personas' 
+  | 'sprint-planner'
+  | 'audit-trail'
   | 'analytics' 
+  | 'api-gateway'
+  | 'api-health'
+  | 'websocket-monitor'
+  | 'database'
+  | 'sandbox'
   | 'settings'
   | 'tests';
 
@@ -62,6 +77,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Sparkles,
       badge: '19',
       badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+      dividerAfter: false
+    },
+    {
+      id: 'real-time-solver',
+      label: 'Real-Time Solver',
+      icon: Zap,
+      badge: 'Active',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
       dividerAfter: true
     },
     {
@@ -85,9 +108,63 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Users,
     },
     {
+      id: 'sprint-planner',
+      label: 'Sprint Planner',
+      icon: Zap,
+      badge: '2-Wk',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+    },
+    {
+      id: 'audit-trail',
+      label: 'Audit Trail',
+      icon: History,
+      badge: 'Live',
+      badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
+      dividerAfter: true
+    },
+    {
       id: 'analytics',
       label: 'Analytics',
       icon: BarChart3,
+    },
+    {
+      id: 'api-gateway',
+      label: 'API Gateway',
+      icon: Terminal,
+      badge: 'REST v2',
+      badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
+      dividerAfter: false
+    },
+    {
+      id: 'api-health',
+      label: 'API Health',
+      icon: Activity,
+      badge: '99.4%',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+      dividerAfter: false
+    },
+    {
+      id: 'websocket-monitor',
+      label: 'WebSocket Monitor',
+      icon: Radio,
+      badge: 'Live',
+      badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
+      dividerAfter: false
+    },
+    {
+      id: 'database',
+      label: 'Database & Supabase',
+      icon: Database,
+      badge: 'Postgres',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+      dividerAfter: false
+    },
+    {
+      id: 'sandbox',
+      label: 'Sandbox Lab',
+      icon: FlaskConical,
+      badge: 'Staging',
+      badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
       dividerAfter: true
     },
     {

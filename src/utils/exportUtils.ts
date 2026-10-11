@@ -1118,3 +1118,246 @@ export function exportRiceAlignmentReportPdf(
   doc.save(`${cleanName}_rice_alignment_report.pdf`);
 }
 
+/**
+ * Formats CSV values according to RFC 4180
+ */
+function escapeCsvCell(val: any): string {
+  if (val === null || val === undefined) return '""';
+  const str = String(val);
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
+export type RoadmapCsvFormat = 'universal' | 'jira' | 'asana';
+
+/**
+ * Generates and triggers browser download of roadmap artifacts formatted for Jira or Asana import
+ */
+export function exportRoadmapToCsv(
+  artifact: {
+    id?: string;
+    version: number;
+    status: ArtifactStatus;
+    schemaData?: any;
+    renderedMarkdown?: string;
+  },
+  productName: string,
+  format: RoadmapCsvFormat = 'universal'
+) {
+  const schema = artifact.schemaData || {};
+  const cleanProductName = productName || 'Product';
+  const cleanFilename = cleanProductName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const filename = `${cleanFilename}_roadmap_v${artifact.version || 1}_${format}.csv`;
+
+  interface RoadmapRow {
+    id: string;
+    summary: string;
+    issueType: string;
+    description: string;
+    quarter: string;
+    theme: string;
+    priority: string;
+    effortWeeks: number | string;
+    targetOutcome: string;
+    dependencies: string;
+    labels: string;
+  }
+
+  const rows: RoadmapRow[] = [];
+
+  // 1. If quarterHorizons exist
+  if (Array.isArray(schema.quarterHorizons) && schema.quarterHorizons.length > 0) {
+    schema.quarterHorizons.forEach((qh: any, qIdx: number) => {
+      const quarterLabel = qh.quarter || `Q${(qIdx % 4) + 1}`;
+      const themeLabel = qh.theme || 'Core Capabilities';
+
+      if (Array.isArray(qh.initiatives) && qh.initiatives.length > 0) {
+        qh.initiatives.forEach((init: any, iIdx: number) => {
+          const rawPriority = (init.priority || 'P1').toUpperCase();
+          const priority = rawPriority.includes('0') || rawPriority.includes('HIGH') ? 'Highest'
+            : rawPriority.includes('1') || rawPriority.includes('MED') ? 'High'
+            : 'Medium';
+
+          const descParts = [];
+          if (init.description) descParts.push(init.description);
+          if (init.targetOutcome) descParts.push(`Target Outcome: ${init.targetOutcome}`);
+          if (qh.theme) descParts.push(`Strategic Theme: ${qh.theme}`);
+          if (init.dependencies && init.dependencies.length > 0) {
+            descParts.push(`Dependencies: ${Array.isArray(init.dependencies) ? init.dependencies.join(', ') : init.dependencies}`);
+          }
+
+          rows.push({
+            id: init.id || `INIT-${qIdx + 1}${iIdx + 1}`,
+            summary: init.title || `Initiative ${iIdx + 1}`,
+            issueType: 'Epic',
+            description: descParts.join('\n\n'),
+            quarter: quarterLabel,
+            theme: themeLabel,
+            priority,
+            effortWeeks: init.estimatedEffortWeeks || 4,
+            targetOutcome: init.targetOutcome || '',
+            dependencies: Array.isArray(init.dependencies) ? init.dependencies.join('; ') : (init.dependencies || ''),
+            labels: `roadmap,${quarterLabel.toLowerCase().replace(/\s+/g, '-')},${cleanFilename}`
+          });
+        });
+      } else {
+        rows.push({
+          id: `QH-${qIdx + 1}`,
+          summary: `${quarterLabel}: ${themeLabel}`,
+          issueType: 'Epic',
+          description: `Roadmap strategic horizon for ${quarterLabel}. Theme: ${themeLabel}. Vision: ${schema.vision || cleanProductName}`,
+          quarter: quarterLabel,
+          theme: themeLabel,
+          priority: 'High',
+          effortWeeks: 12,
+          targetOutcome: themeLabel,
+          dependencies: '',
+          labels: `roadmap,${quarterLabel.toLowerCase().replace(/\s+/g, '-')},${cleanFilename}`
+        });
+      }
+    });
+  } else if (Array.isArray(schema.phases) && schema.phases.length > 0) {
+    // 2. If phases format exists
+    schema.phases.forEach((phase: any, pIdx: number) => {
+      const quarterLabel = phase.targetQuarter || `Phase ${pIdx + 1}`;
+      const deliverables = Array.isArray(phase.deliverables) ? phase.deliverables.join('; ') : (phase.deliverables || '');
+      const milestones = Array.isArray(phase.milestones) ? phase.milestones.join('; ') : (phase.milestones || '');
+      const deps = Array.isArray(phase.dependencies) ? phase.dependencies.join('; ') : (phase.dependencies || '');
+
+      rows.push({
+        id: `PHASE-${pIdx + 1}`,
+        summary: phase.phaseName || `Phase ${pIdx + 1}`,
+        issueType: 'Epic',
+        description: `Deliverables: ${deliverables}\nMilestones: ${milestones}\nDependencies: ${deps}`,
+        quarter: quarterLabel,
+        theme: schema.theme || 'Platform Evolution',
+        priority: 'High',
+        effortWeeks: 8,
+        targetOutcome: deliverables,
+        dependencies: deps,
+        labels: `roadmap,phase-${pIdx + 1},${cleanFilename}`
+      });
+    });
+  } else {
+    rows.push({
+      id: 'INIT-1',
+      summary: `${cleanProductName} Roadmap Delivery`,
+      issueType: 'Epic',
+      description: schema.vision || schema.theme || 'Enterprise Platform Delivery Roadmap',
+      quarter: 'Q1 2027',
+      theme: 'Core Foundation',
+      priority: 'Highest',
+      effortWeeks: 8,
+      targetOutcome: 'Successful platform rollout',
+      dependencies: '',
+      labels: `roadmap,${cleanFilename}`
+    });
+  }
+
+  // Construct CSV based on format
+  let csvContent = '';
+
+  if (format === 'jira') {
+    // Standard Jira CSV Import format
+    const headers = [
+      'Issue Type',
+      'Summary',
+      'Description',
+      'Priority',
+      'Fix Version',
+      'Component',
+      'Original Estimate (Weeks)',
+      'Labels',
+      'External Issue ID'
+    ];
+    csvContent += headers.map(escapeCsvCell).join(',') + '\r\n';
+
+    rows.forEach(r => {
+      const line = [
+        r.issueType,
+        r.summary,
+        r.description,
+        r.priority,
+        r.quarter,
+        r.theme,
+        r.effortWeeks,
+        r.labels,
+        r.id
+      ];
+      csvContent += line.map(escapeCsvCell).join(',') + '\r\n';
+    });
+  } else if (format === 'asana') {
+    // Standard Asana CSV Import format
+    const headers = [
+      'Name',
+      'Description',
+      'Section',
+      'Priority',
+      'Estimated Effort (Weeks)',
+      'Target Outcome',
+      'Dependencies',
+      'Tags'
+    ];
+    csvContent += headers.map(escapeCsvCell).join(',') + '\r\n';
+
+    rows.forEach(r => {
+      const line = [
+        r.summary,
+        r.description,
+        `${r.quarter}: ${r.theme}`,
+        r.priority,
+        r.effortWeeks,
+        r.targetOutcome,
+        r.dependencies,
+        r.labels
+      ];
+      csvContent += line.map(escapeCsvCell).join(',') + '\r\n';
+    });
+  } else {
+    // Universal Jira & Asana Compatible Format
+    const headers = [
+      'Summary',
+      'Issue Type',
+      'Description',
+      'Section / Quarter',
+      'Theme',
+      'Priority',
+      'Estimated Effort (Weeks)',
+      'Target Outcome',
+      'Dependencies',
+      'Labels',
+      'Product',
+      'Status'
+    ];
+    csvContent += headers.map(escapeCsvCell).join(',') + '\r\n';
+
+    rows.forEach(r => {
+      const line = [
+        r.summary,
+        r.issueType,
+        r.description,
+        r.quarter,
+        r.theme,
+        r.priority,
+        r.effortWeeks,
+        r.targetOutcome,
+        r.dependencies,
+        r.labels,
+        cleanProductName,
+        artifact.status || 'APPROVED'
+      ];
+      csvContent += line.map(escapeCsvCell).join(',') + '\r\n';
+    });
+  }
+
+  // Trigger browser download
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+

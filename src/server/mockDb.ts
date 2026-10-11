@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import {
   Product,
   Problem,
@@ -9,7 +10,19 @@ import {
   ArtifactType,
   SprintStory,
   WorkspaceActivity,
-  CompleteWorkspacePayload
+  CompleteWorkspacePayload,
+  ArtifactComment,
+  CommentReply,
+  ApiKey,
+  ApiScope,
+  ApiRequestAuditLogEntry,
+  ApiAuditLogsStats,
+  AiServiceQuota,
+  AiGatewayRateLimiterOverview,
+  AppWebhook,
+  WebhookDeliveryLog,
+  WebhookEventType,
+  WebhooksOverviewStats
 } from '../types.js';
 import { renderArtifactToProse } from './renderer.js';
 
@@ -23,6 +36,20 @@ class ProductPilotDatabase {
   auditLogs: AuditLogEntry[] = [];
   sprintStories: SprintStory[] = [];
   workspaceActivities: WorkspaceActivity[] = [];
+  comments: Map<string, ArtifactComment[]> = new Map();
+  apiKeys: ApiKey[] = [];
+  apiRequestLogs: ApiRequestAuditLogEntry[] = [];
+  aiServices: AiServiceQuota[] = [];
+  webhooks: AppWebhook[] = [];
+  webhookDeliveries: WebhookDeliveryLog[] = [];
+  onBroadcast?: (eventData: any) => void;
+  throttleEvents: Array<{
+    id: string;
+    timestamp: string;
+    serviceId: string;
+    reason: string;
+    retryAfterSeconds: number;
+  }> = [];
   
   // Organization token budget (Section 6 & Acceptance Test 7)
   tokenBudgetLimit = 50000;
@@ -33,6 +60,197 @@ class ProductPilotDatabase {
   }
 
   seedInitialData() {
+    this.initAiServicesQuotas();
+    this.seedWebhooks();
+
+    // 0a. Seeded API Request Audit Logs for Observability Stream
+    const nowMs = Date.now();
+    this.apiRequestLogs = [
+      {
+        id: 'req_log_101',
+        timestamp: new Date(nowMs - 45 * 1000).toISOString(),
+        method: 'POST',
+        path: '/api/generate',
+        statusCode: 201,
+        statusText: 'Created',
+        latencyMs: 142,
+        apiKeyPrefix: 'sk_live_prodpilot_88a9',
+        clientIp: '10.0.4.12',
+        scopeUsed: 'generate:execute',
+        outcome: 'SUCCESS',
+        details: 'Artifact PRD generated and validated against Zod Schema v2 with zero repair iterations.',
+        userAgent: 'ProductPilot-CI-Pipeline/2.4'
+      },
+      {
+        id: 'req_log_102',
+        timestamp: new Date(nowMs - 2 * 60 * 1000).toISOString(),
+        method: 'POST',
+        path: '/api/schemas/validate',
+        statusCode: 200,
+        statusText: 'OK',
+        latencyMs: 28,
+        apiKeyPrefix: 'sk_live_prodpilot_88a9',
+        clientIp: '10.0.4.12',
+        scopeUsed: 'schemas:validate',
+        outcome: 'SUCCESS',
+        details: 'Dual-pass validation succeeded: upgraded legacy v1 schema payload to v2 specification.',
+        userAgent: 'ProductPilot-CI-Pipeline/2.4'
+      },
+      {
+        id: 'req_log_103',
+        timestamp: new Date(nowMs - 6 * 60 * 1000).toISOString(),
+        method: 'GET',
+        path: '/api/artifacts/art_prd_banking/comments',
+        statusCode: 200,
+        statusText: 'OK',
+        latencyMs: 19,
+        apiKeyPrefix: 'sk_dev_remix_fastpreview_77b1',
+        clientIp: '127.0.0.1',
+        scopeUsed: 'artifacts:read',
+        outcome: 'SUCCESS',
+        details: 'Fetched 4 requirement discussion threads (2 open, 2 resolved) for art_prd_banking.',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
+      },
+      {
+        id: 'req_log_104',
+        timestamp: new Date(nowMs - 11 * 60 * 1000).toISOString(),
+        method: 'POST',
+        path: '/api/artifacts/art_prd_banking/comments',
+        statusCode: 201,
+        statusText: 'Created',
+        latencyMs: 44,
+        apiKeyPrefix: 'sk_dev_remix_fastpreview_77b1',
+        clientIp: '127.0.0.1',
+        scopeUsed: 'comments:manage',
+        outcome: 'SUCCESS',
+        details: 'Posted top-level requirement discussion on FR-102 (Automated Daily Sweep Rules).',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
+      },
+      {
+        id: 'req_log_105',
+        timestamp: new Date(nowMs - 16 * 60 * 1000).toISOString(),
+        method: 'POST',
+        path: '/api/api-keys/validate',
+        statusCode: 200,
+        statusText: 'OK',
+        latencyMs: 12,
+        apiKeyPrefix: 'sk_live_prodpilot_88a9',
+        clientIp: '10.0.4.12',
+        scopeUsed: 'admin:all',
+        outcome: 'SUCCESS',
+        details: 'Cryptographic Bearer token authenticated with scopes: artifacts:read, write, generate:execute.',
+        userAgent: 'ProductPilot-Go-SDK/1.1'
+      },
+      {
+        id: 'req_log_106',
+        timestamp: new Date(nowMs - 22 * 60 * 1000).toISOString(),
+        method: 'POST',
+        path: '/api/schemas/validate',
+        statusCode: 400,
+        statusText: 'Bad Request',
+        latencyMs: 14,
+        apiKeyPrefix: 'sk_dev_remix_fastpreview_77b1',
+        clientIp: '127.0.0.1',
+        scopeUsed: 'schemas:validate',
+        outcome: 'CLIENT_ERROR',
+        details: 'Zod parse rejected: objective must be at least 20 characters (received 11 chars).',
+        userAgent: 'PostmanRuntime/7.36.0'
+      },
+      {
+        id: 'req_log_107',
+        timestamp: new Date(nowMs - 31 * 60 * 1000).toISOString(),
+        method: 'POST',
+        path: '/api/generate',
+        statusCode: 401,
+        statusText: 'Unauthorized',
+        latencyMs: 9,
+        apiKeyPrefix: 'Anonymous',
+        clientIp: '192.168.1.45',
+        outcome: 'UNAUTHORIZED',
+        details: 'Unauthorized API call: Missing required Bearer key or invalid secret format.',
+        userAgent: 'curl/8.4.0'
+      },
+      {
+        id: 'req_log_108',
+        timestamp: new Date(nowMs - 42 * 60 * 1000).toISOString(),
+        method: 'POST',
+        path: '/api/artifacts/art_prd_banking/approve',
+        statusCode: 200,
+        statusText: 'OK',
+        latencyMs: 62,
+        apiKeyPrefix: 'sk_live_prodpilot_88a9',
+        clientIp: '10.0.4.12',
+        scopeUsed: 'artifacts:write',
+        outcome: 'SUCCESS',
+        details: 'Governance approval gate executed: promoted art_prd_banking to Official Specification v2.',
+        userAgent: 'ProductPilot-CI-Pipeline/2.4'
+      },
+      {
+        id: 'req_log_109',
+        timestamp: new Date(nowMs - 58 * 60 * 1000).toISOString(),
+        method: 'GET',
+        path: '/api/schemas/versions',
+        statusCode: 200,
+        statusText: 'OK',
+        latencyMs: 16,
+        apiKeyPrefix: 'sk_dev_remix_fastpreview_77b1',
+        clientIp: '127.0.0.1',
+        scopeUsed: 'artifacts:read',
+        outcome: 'SUCCESS',
+        details: 'Catalog inspection returned 19 registered artifact schema versions (v1 & v2).',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
+      },
+      {
+        id: 'req_log_110',
+        timestamp: new Date(nowMs - 74 * 60 * 1000).toISOString(),
+        method: 'GET',
+        path: '/api/telemetry',
+        statusCode: 200,
+        statusText: 'OK',
+        latencyMs: 22,
+        apiKeyPrefix: 'sk_live_prodpilot_88a9',
+        clientIp: '10.0.4.12',
+        scopeUsed: 'audit:read',
+        outcome: 'SUCCESS',
+        details: 'Telemetry observatory queried: P50=38ms, P95=94ms, 0% validation failure rate.',
+        userAgent: 'Datadog-Agent/7.50'
+      }
+    ];
+
+    // 0b. Seeded API Keys for Developer Gateway & CI/CD
+    this.apiKeys = [
+      {
+        id: 'key_prod_01',
+        name: 'Production CI/CD Release Pipeline',
+        prefix: 'sk_live_prodpilot_88a9',
+        hashedToken: 'sk_live_prodpilot_88a9f02c',
+        environment: 'production',
+        scopes: ['artifacts:read', 'artifacts:write', 'generate:execute', 'schemas:validate', 'audit:read', 'admin:all'],
+        rateLimitPerMinute: 300,
+        status: 'active',
+        createdAt: new Date(Date.now() - 25 * 86400000).toISOString(),
+        lastUsedAt: new Date(Date.now() - 45 * 60000).toISOString(),
+        expiresAt: new Date(Date.now() + 340 * 86400000).toISOString(),
+        requestCount: 1420,
+        lastClientIp: '10.0.4.12'
+      },
+      {
+        id: 'key_dev_02',
+        name: 'Frontend Client SDK Preview Key',
+        prefix: 'sk_dev_remix_fastpreview_77b1',
+        hashedToken: 'sk_dev_remix_fastpreview_77b1',
+        environment: 'development',
+        scopes: ['artifacts:read', 'generate:execute', 'comments:manage', 'schemas:validate'],
+        rateLimitPerMinute: 120,
+        status: 'active',
+        createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
+        lastUsedAt: new Date(Date.now() - 12 * 60000).toISOString(),
+        expiresAt: new Date(Date.now() + 90 * 86400000).toISOString(),
+        requestCount: 388,
+        lastClientIp: '127.0.0.1'
+      }
+    ];
+
     // 1. Rich Product: PayFlow Enterprise Checkout
     const richProduct: Product = {
       id: 'prod_payflow',
@@ -1330,6 +1548,231 @@ class ProductPilotDatabase {
       ]
     };
     this.artifacts.set(storiesPayflowArtifact.id, storiesPayflowArtifact);
+
+    // -------------------------------------------------------------
+    // 5. Seed Requirement & Artifact Comment Threads
+    // -------------------------------------------------------------
+    const prdBankingComments: ArtifactComment[] = [
+      {
+        id: 'cmt_prd_101',
+        artifactId: 'art_prd_banking',
+        productId: 'prod_banking',
+        targetType: 'REQUIREMENT',
+        requirementId: 'FR-101',
+        requirementTitle: 'Real-time Multi-Bank Balance Aggregation via Open Banking & SWIFT APIs',
+        author: {
+          name: 'Marcus Chen',
+          role: 'Staff Backend Architect',
+          avatarBg: 'bg-blue-600',
+          email: 'marcus.chen@company.internal'
+        },
+        content: 'Have we finalized the retry backoff policy for SWIFT network timeouts? Under peak transaction volume, tier-1 open banking APIs might enforce 429 rate limiting.',
+        createdAt: new Date(Date.now() - 48 * 3600000).toISOString(),
+        status: 'RESOLVED',
+        tag: 'Architecture',
+        resolvedBy: {
+          name: 'Alex Rivera',
+          role: 'Lead PM'
+        },
+        resolvedAt: new Date(Date.now() - 24 * 3600000).toISOString(),
+        reactions: { '👍': ['Alex Rivera', 'Sarah Jenkins'], '💡': ['David Zhao'] },
+        replies: [
+          {
+            id: 'rep_101_1',
+            author: {
+              name: 'Alex Rivera',
+              role: 'Lead Product Manager',
+              avatarBg: 'bg-emerald-600',
+              email: 'alex.rivera@company.internal'
+            },
+            content: 'Yes, confirmed with banking ops: we are introducing distributed Redis jitter backoff caching in FR-106 with an idempotency key vault.',
+            createdAt: new Date(Date.now() - 36 * 3600000).toISOString(),
+            reactions: { '🚀': ['Marcus Chen'] }
+          },
+          {
+            id: 'rep_101_2',
+            author: {
+              name: 'Sarah Jenkins',
+              role: 'Senior Security Engineer',
+              avatarBg: 'bg-rose-600',
+              email: 'sarah.j@company.internal'
+            },
+            content: 'Also ensure MT940 statement tokens are encrypted at rest with hardware security module (HSM) envelope keys.',
+            createdAt: new Date(Date.now() - 28 * 3600000).toISOString()
+          }
+        ]
+      },
+      {
+        id: 'cmt_prd_102',
+        artifactId: 'art_prd_banking',
+        productId: 'prod_banking',
+        targetType: 'REQUIREMENT',
+        requirementId: 'FR-105',
+        requirementTitle: 'Hardware WebAuthn / Biometric Multi-Signer Dual Approval for Wires exceeding $100k',
+        author: {
+          name: 'Sarah Jenkins',
+          role: 'Senior Security Engineer',
+          avatarBg: 'bg-rose-600',
+          email: 'sarah.j@company.internal'
+        },
+        content: 'Is FIDO2 Level 3 attestation required for European corporate treasuries, or will standard TouchID/FaceID platform WebAuthn credentials suffice for Day 1?',
+        createdAt: new Date(Date.now() - 18 * 3600000).toISOString(),
+        status: 'OPEN',
+        tag: 'Security',
+        reactions: { '👀': ['Alex Rivera', 'Elena Rostova'], '⚠️': ['David Zhao'] },
+        replies: [
+          {
+            id: 'rep_102_1',
+            author: {
+              name: 'Alex Rivera',
+              role: 'Lead Product Manager',
+              avatarBg: 'bg-emerald-600',
+              email: 'alex.rivera@company.internal'
+            },
+            content: 'Standard platform WebAuthn is approved for North America MVP; physical FIDO2 Level 3 keys are marked in outOfScope for Day 1.',
+            createdAt: new Date(Date.now() - 12 * 3600000).toISOString(),
+            reactions: { '👍': ['Sarah Jenkins'] }
+          }
+        ]
+      },
+      {
+        id: 'cmt_prd_103',
+        artifactId: 'art_prd_banking',
+        productId: 'prod_banking',
+        targetType: 'REQUIREMENT',
+        requirementId: 'FR-102',
+        requirementTitle: 'Automated Daily Sweep Account Rules Engine for overnight yield maximization',
+        author: {
+          name: 'Maya Lin',
+          role: 'Principal Product Designer',
+          avatarBg: 'bg-purple-600',
+          email: 'maya.lin@company.internal'
+        },
+        content: 'We should provide a clear visual simulation diff confirmation before corporate treasurers commit automated sweep rules to avoid unintended liquidity locks.',
+        createdAt: new Date(Date.now() - 8 * 3600000).toISOString(),
+        status: 'OPEN',
+        tag: 'UX',
+        reactions: { '💡': ['Alex Rivera', 'David Zhao'] },
+        replies: [
+          {
+            id: 'rep_103_1',
+            author: {
+              name: 'David Zhao',
+              role: 'Staff QA Lead',
+              avatarBg: 'bg-amber-600',
+              email: 'david.zhao@company.internal'
+            },
+            content: 'Great call Maya! We can build a sandbox dry-run toggle in the UI so users can verify simulated yield before triggering real ACH transfers.',
+            createdAt: new Date(Date.now() - 4 * 3600000).toISOString()
+          }
+        ]
+      },
+      {
+        id: 'cmt_prd_104',
+        artifactId: 'art_prd_banking',
+        productId: 'prod_banking',
+        targetType: 'PRD',
+        requirementId: 'OBJECTIVE',
+        requirementTitle: 'Executive Objective: Sub-15s Cash Positioning',
+        author: {
+          name: 'Elena Rostova',
+          role: 'Engineering Director',
+          avatarBg: 'bg-indigo-600',
+          email: 'elena.rostova@company.internal'
+        },
+        content: 'Target latency of sub-15s is feasible with read-replicas in us-east and eu-west. Infrastructure sizing model is approved for Sprint 2 kickoff.',
+        createdAt: new Date(Date.now() - 20 * 3600000).toISOString(),
+        status: 'RESOLVED',
+        tag: 'SLA',
+        resolvedBy: {
+          name: 'Elena Rostova',
+          role: 'Engineering Director'
+        },
+        resolvedAt: new Date(Date.now() - 10 * 3600000).toISOString(),
+        reactions: { '🚀': ['Alex Rivera', 'Marcus Chen'] },
+        replies: []
+      }
+    ];
+    this.comments.set('art_prd_banking', prdBankingComments);
+
+    const storiesBankingComments: ArtifactComment[] = [
+      {
+        id: 'cmt_sty_201',
+        artifactId: 'art_stories_banking',
+        productId: 'prod_banking',
+        targetType: 'STORY',
+        requirementId: 'US-101',
+        requirementTitle: 'US-101: Real-time Multi-Bank Balance Aggregation',
+        author: {
+          name: 'Marcus Chen',
+          role: 'Staff Backend Architect',
+          avatarBg: 'bg-blue-600',
+          email: 'marcus.chen@company.internal'
+        },
+        content: 'The 8-point estimate accounts for SWIFT MT940 XML parsing. Should we split this story into aggregation vs webhook dispatch?',
+        createdAt: new Date(Date.now() - 30 * 3600000).toISOString(),
+        status: 'RESOLVED',
+        tag: 'Scope',
+        resolvedBy: {
+          name: 'Alex Rivera',
+          role: 'Lead PM'
+        },
+        resolvedAt: new Date(Date.now() - 14 * 3600000).toISOString(),
+        reactions: { '👍': ['Alex Rivera'] },
+        replies: [
+          {
+            id: 'rep_201_1',
+            author: {
+              name: 'Alex Rivera',
+              role: 'Lead Product Manager',
+              avatarBg: 'bg-emerald-600'
+            },
+            content: 'Agreed, let us keep US-101 focused strictly on ingestion/aggregation and handle webhook replay in US-106.',
+            createdAt: new Date(Date.now() - 20 * 3600000).toISOString()
+          }
+        ]
+      },
+      {
+        id: 'cmt_sty_202',
+        artifactId: 'art_stories_banking',
+        productId: 'prod_banking',
+        targetType: 'STORY',
+        requirementId: 'US-105',
+        requirementTitle: 'US-105: Hardware WebAuthn Biometric Multi-Signer Approval',
+        author: {
+          name: 'David Zhao',
+          role: 'Staff QA Lead',
+          avatarBg: 'bg-amber-600',
+          email: 'david.zhao@company.internal'
+        },
+        content: 'Automated Playwright/Cypress suites will need a mock WebAuthn virtual authenticator configured in CI. Added this note to Gherkin scenarios.',
+        createdAt: new Date(Date.now() - 15 * 3600000).toISOString(),
+        status: 'OPEN',
+        tag: 'Quality',
+        reactions: { '👍': ['Sarah Jenkins', 'Marcus Chen'] },
+        replies: []
+      },
+      {
+        id: 'cmt_sty_203',
+        artifactId: 'art_stories_banking',
+        productId: 'prod_banking',
+        targetType: 'STORY',
+        requirementId: 'US-103',
+        requirementTitle: 'US-103: Predictive 30-Day Liquidity Deficit Alerting',
+        author: {
+          name: 'Sarah Jenkins',
+          role: 'Senior Security Engineer',
+          avatarBg: 'bg-rose-600'
+        },
+        content: 'Ensure historical AP run-rate datasets ingested for machine learning predictions are strictly anonymized and tokenized for SOC2 Type II compliance.',
+        createdAt: new Date(Date.now() - 6 * 3600000).toISOString(),
+        status: 'OPEN',
+        tag: 'Security',
+        reactions: { '⚠️': ['Alex Rivera'] },
+        replies: []
+      }
+    ];
+    this.comments.set('art_stories_banking', storiesBankingComments);
   }
 
   getProduct(id: string): Product | undefined {
@@ -1413,7 +1856,1109 @@ class ProductPilotDatabase {
       ...entry
     };
     this.auditLogs.unshift(log);
+    try {
+      this.onBroadcast?.({
+        type: 'AUDIT_EVENT',
+        event: log
+      });
+    } catch (e) {
+      console.warn('[Broadcast Audit Error]', e);
+    }
     return log;
+  }
+
+  getComments(artifactId: string, requirementId?: string): ArtifactComment[] {
+    const list = this.comments.get(artifactId) || [];
+    if (requirementId) {
+      return list.filter(c => c.requirementId === requirementId);
+    }
+    return list;
+  }
+
+  addComment(commentData: Omit<ArtifactComment, 'id' | 'createdAt' | 'status' | 'replies'> & { id?: string; createdAt?: string; status?: 'OPEN' | 'RESOLVED'; replies?: CommentReply[] }): ArtifactComment {
+    const list = this.comments.get(commentData.artifactId) || [];
+    const newComment: ArtifactComment = {
+      id: commentData.id || `cmt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      artifactId: commentData.artifactId,
+      productId: commentData.productId,
+      targetType: commentData.targetType,
+      requirementId: commentData.requirementId,
+      requirementTitle: commentData.requirementTitle,
+      author: commentData.author,
+      content: commentData.content,
+      createdAt: commentData.createdAt || new Date().toISOString(),
+      status: commentData.status || 'OPEN',
+      tag: commentData.tag || 'General',
+      replies: commentData.replies || [],
+      reactions: {}
+    };
+
+    list.unshift(newComment);
+    this.comments.set(commentData.artifactId, list);
+
+    this.addWorkspaceActivity({
+      productId: commentData.productId,
+      type: 'COMMENT',
+      author: {
+        name: commentData.author.name,
+        role: commentData.author.role,
+        avatarBg: commentData.author.avatarBg
+      },
+      title: `Comment on ${commentData.requirementId || 'Specification'}`,
+      description: commentData.content.length > 90 ? `${commentData.content.slice(0, 90)}...` : commentData.content,
+      tag: commentData.tag || 'Review'
+    });
+
+    return newComment;
+  }
+
+  addReply(artifactId: string, commentId: string, replyData: Omit<CommentReply, 'id' | 'createdAt'> & { id?: string; createdAt?: string }): CommentReply | undefined {
+    const list = this.comments.get(artifactId) || [];
+    const comment = list.find(c => c.id === commentId);
+    if (!comment) return undefined;
+
+    const newReply: CommentReply = {
+      id: replyData.id || `rep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      author: replyData.author,
+      content: replyData.content,
+      createdAt: replyData.createdAt || new Date().toISOString(),
+      reactions: {}
+    };
+
+    if (!comment.replies) comment.replies = [];
+    comment.replies.push(newReply);
+    comment.updatedAt = new Date().toISOString();
+
+    return newReply;
+  }
+
+  resolveComment(artifactId: string, commentId: string, resolvedBy?: { name: string; role: string }): ArtifactComment | undefined {
+    const list = this.comments.get(artifactId) || [];
+    const comment = list.find(c => c.id === commentId);
+    if (!comment) return undefined;
+
+    if (comment.status === 'RESOLVED') {
+      comment.status = 'OPEN';
+      comment.resolvedBy = undefined;
+      comment.resolvedAt = undefined;
+    } else {
+      comment.status = 'RESOLVED';
+      comment.resolvedBy = resolvedBy || { name: 'Alex Rivera', role: 'Lead PM' };
+      comment.resolvedAt = new Date().toISOString();
+    }
+    comment.updatedAt = new Date().toISOString();
+    return comment;
+  }
+
+  toggleCommentReaction(artifactId: string, commentId: string, emoji: string, userName: string): ArtifactComment | undefined {
+    const list = this.comments.get(artifactId) || [];
+    const comment = list.find(c => c.id === commentId);
+    if (!comment) return undefined;
+
+    if (!comment.reactions) comment.reactions = {};
+    const existing = comment.reactions[emoji] || [];
+    if (existing.includes(userName)) {
+      comment.reactions[emoji] = existing.filter(u => u !== userName);
+      if (comment.reactions[emoji].length === 0) {
+        delete comment.reactions[emoji];
+      }
+    } else {
+      comment.reactions[emoji] = [...existing, userName];
+    }
+    return comment;
+  }
+
+  deleteComment(artifactId: string, commentId: string): boolean {
+    const list = this.comments.get(artifactId) || [];
+    const initialLen = list.length;
+    const filtered = list.filter(c => c.id !== commentId);
+    this.comments.set(artifactId, filtered);
+    return filtered.length < initialLen;
+  }
+
+  // ==========================================
+  // API KEY MANAGEMENT & SECURITY ENGINE
+  // ==========================================
+
+  getApiKeys(): ApiKey[] {
+    return this.apiKeys;
+  }
+
+  createApiKey(data: {
+    name: string;
+    environment?: 'production' | 'staging' | 'development';
+    scopes?: ApiScope[];
+    expiresInDays?: number;
+    rateLimitPerMinute?: number;
+  }): { apiKey: ApiKey; secretToken: string } {
+    const env = data.environment || 'development';
+    const scopes: ApiScope[] = data.scopes && data.scopes.length > 0 ? data.scopes : (['artifacts:read', 'generate:execute'] as ApiScope[]);
+    const randomHex = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+    const prefixStr = env === 'production' ? 'sk_live' : env === 'staging' ? 'sk_stage' : 'sk_dev';
+    const secretToken = `${prefixStr}_${randomHex}`;
+    const id = `key_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const prefix = `${secretToken.substring(0, 16)}••••`;
+
+    const now = new Date();
+    const expiresAt = data.expiresInDays && data.expiresInDays > 0
+      ? new Date(now.getTime() + data.expiresInDays * 86400000).toISOString()
+      : undefined;
+
+    const newKey: ApiKey = {
+      id,
+      name: data.name,
+      prefix,
+      hashedToken: secretToken,
+      environment: env,
+      scopes,
+      rateLimitPerMinute: data.rateLimitPerMinute || (env === 'production' ? 300 : 120),
+      status: 'active',
+      createdAt: now.toISOString(),
+      expiresAt,
+      requestCount: 0
+    };
+
+    this.apiKeys.unshift(newKey);
+    return { apiKey: newKey, secretToken };
+  }
+
+  revokeApiKey(keyId: string): boolean {
+    const key = this.apiKeys.find(k => k.id === keyId);
+    if (!key) return false;
+    key.status = 'revoked';
+    return true;
+  }
+
+  rotateApiKey(keyId: string): { apiKey: ApiKey; secretToken: string } | undefined {
+    const key = this.apiKeys.find(k => k.id === keyId);
+    if (!key) return undefined;
+
+    const prefixStr = key.environment === 'production' ? 'sk_live' : key.environment === 'staging' ? 'sk_stage' : 'sk_dev';
+    const randomHex = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+    const secretToken = `${prefixStr}_${randomHex}`;
+
+    key.hashedToken = secretToken;
+    key.prefix = `${secretToken.substring(0, 16)}••••`;
+    key.status = 'active';
+    key.createdAt = new Date().toISOString();
+    return { apiKey: key, secretToken };
+  }
+
+  validateApiKeyToken(token: string, requiredScope?: ApiScope): { valid: boolean; key?: ApiKey; reason?: string } {
+    if (!token) {
+      return { valid: false, reason: 'Missing API Key token' };
+    }
+
+    const cleanToken = token.trim();
+    // Allow matching hashedToken or if token matches prefix start
+    const key = this.apiKeys.find(k => k.hashedToken === cleanToken || (k.hashedToken && cleanToken.startsWith(k.hashedToken)));
+    
+    if (!key) {
+      return { valid: false, reason: 'Invalid or unknown API Key' };
+    }
+
+    if (key.status !== 'active') {
+      return { valid: false, key, reason: `API Key is ${key.status}` };
+    }
+
+    if (key.expiresAt && new Date(key.expiresAt).getTime() < Date.now()) {
+      key.status = 'expired';
+      return { valid: false, key, reason: 'API Key has expired' };
+    }
+
+    if (requiredScope && !key.scopes.includes(requiredScope) && !key.scopes.includes('admin:all')) {
+      return { valid: false, key, reason: `API Key lacks required scope: ${requiredScope}` };
+    }
+
+    return { valid: true, key };
+  }
+
+  recordApiKeyUsage(keyId: string, clientIp?: string): void {
+    const key = this.apiKeys.find(k => k.id === keyId);
+    if (key) {
+      key.requestCount += 1;
+      key.lastUsedAt = new Date().toISOString();
+      if (clientIp) key.lastClientIp = clientIp;
+    }
+  }
+
+  // ==========================================
+  // API REQUEST AUDIT LOGS & OBSERVABILITY
+  // ==========================================
+
+  getApiRequestLogs(limit: number = 50, filter?: { status?: string; method?: string; search?: string }): {
+    logs: ApiRequestAuditLogEntry[];
+    stats: ApiAuditLogsStats;
+  } {
+    let result = [...this.apiRequestLogs];
+
+    if (filter?.method && filter.method !== 'ALL') {
+      result = result.filter(r => r.method === filter.method);
+    }
+
+    if (filter?.status && filter.status !== 'ALL') {
+      if (filter.status === '2XX') {
+        result = result.filter(r => r.statusCode >= 200 && r.statusCode < 300);
+      } else if (filter.status === '4XX') {
+        result = result.filter(r => r.statusCode >= 400 && r.statusCode < 500);
+      } else if (filter.status === '5XX') {
+        result = result.filter(r => r.statusCode >= 500);
+      }
+    }
+
+    if (filter?.search && filter.search.trim()) {
+      const q = filter.search.toLowerCase();
+      result = result.filter(r => 
+        r.path.toLowerCase().includes(q) ||
+        r.details.toLowerCase().includes(q) ||
+        (r.apiKeyPrefix && r.apiKeyPrefix.toLowerCase().includes(q)) ||
+        r.clientIp.includes(q)
+      );
+    }
+
+    const totalRequests = this.apiRequestLogs.length;
+    const successCount = this.apiRequestLogs.filter(r => r.statusCode >= 200 && r.statusCode < 300).length;
+    const clientErrorCount = this.apiRequestLogs.filter(r => r.statusCode >= 400 && r.statusCode < 500).length;
+    const serverErrorCount = this.apiRequestLogs.filter(r => r.statusCode >= 500).length;
+    const sumLatency = this.apiRequestLogs.reduce((acc, r) => acc + (r.latencyMs || 0), 0);
+    const avgLatencyMs = totalRequests > 0 ? Math.round(sumLatency / totalRequests) : 0;
+    const successRate = totalRequests > 0 ? Math.round((successCount / totalRequests) * 1000) / 10 : 100;
+
+    return {
+      logs: result.slice(0, limit),
+      stats: {
+        totalRequests,
+        successCount,
+        clientErrorCount,
+        serverErrorCount,
+        avgLatencyMs,
+        successRate
+      }
+    };
+  }
+
+  recordApiRequestLog(entry: Omit<ApiRequestAuditLogEntry, 'id'>): ApiRequestAuditLogEntry {
+    const id = `req_log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const fullEntry: ApiRequestAuditLogEntry = {
+      id,
+      ...entry
+    };
+    this.apiRequestLogs.unshift(fullEntry);
+    if (this.apiRequestLogs.length > 200) {
+      this.apiRequestLogs.pop();
+    }
+    return fullEntry;
+  }
+
+  clearApiRequestLogs(): void {
+    this.apiRequestLogs = [];
+  }
+
+  // ==========================================
+  // AI RATE LIMITER & QUOTA MONITOR METHODS
+  // ==========================================
+
+  initAiServicesQuotas(): void {
+    const now = new Date();
+    const midnightUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0)).toISOString();
+    const slidingSecs = 60 - (Math.floor(Date.now() / 1000) % 60);
+
+    this.aiServices = [
+      {
+        serviceId: 'gemini-2.5-flash',
+        serviceName: 'Gemini 2.5 Flash (Primary Cascade)',
+        modelIdentifier: 'models/gemini-2.5-flash',
+        category: 'Core Generation',
+        status: 'healthy',
+        rpmQuota: 1000,
+        rpmUsed: 218,
+        rpmRemaining: 782,
+        tpmQuota: 4000000,
+        tpmUsed: 1284500,
+        tpmRemaining: 2715500,
+        dailyTokenQuota: 50000000,
+        dailyTokenUsed: 31420000,
+        dailyTokenRemaining: 18580000,
+        dailyRequestQuota: 20000,
+        dailyRequestUsed: 6840,
+        dailyRequestRemaining: 13160,
+        concurrencyLimit: 60,
+        concurrencyCurrent: 14,
+        upcomingWindowResetSeconds: slidingSecs,
+        upcomingDailyResetUtc: midnightUtc,
+        p95LatencyMs: 240,
+        lastRequestAt: new Date(Date.now() - 12 * 1000).toISOString(),
+        hourlySparkline: [120, 145, 180, 210, 195, 230, 245, 218, 204, 235, 250, 218]
+      },
+      {
+        serviceId: 'gemini-2.5-pro',
+        serviceName: 'Gemini 2.5 Pro (Deep Reasoning & Synthesis)',
+        modelIdentifier: 'models/gemini-2.5-pro',
+        category: 'Reasoning & Verification',
+        status: 'healthy',
+        rpmQuota: 360,
+        rpmUsed: 84,
+        rpmRemaining: 276,
+        tpmQuota: 2000000,
+        tpmUsed: 685200,
+        tpmRemaining: 1314800,
+        dailyTokenQuota: 25000000,
+        dailyTokenUsed: 9580000,
+        dailyTokenRemaining: 15420000,
+        dailyRequestQuota: 8000,
+        dailyRequestUsed: 1940,
+        dailyRequestRemaining: 6060,
+        concurrencyLimit: 30,
+        concurrencyCurrent: 7,
+        upcomingWindowResetSeconds: slidingSecs,
+        upcomingDailyResetUtc: midnightUtc,
+        p95LatencyMs: 980,
+        lastRequestAt: new Date(Date.now() - 48 * 1000).toISOString(),
+        hourlySparkline: [45, 52, 60, 78, 85, 72, 80, 84, 76, 88, 92, 84]
+      },
+      {
+        serviceId: 'gemini-2.0-flash-stream',
+        serviceName: 'Gemini 2.0 Streaming Engine (SSE Token Pipeline)',
+        modelIdentifier: 'models/gemini-2.0-flash',
+        category: 'Streaming Engine',
+        status: 'healthy',
+        rpmQuota: 600,
+        rpmUsed: 142,
+        rpmRemaining: 458,
+        tpmQuota: 2500000,
+        tpmUsed: 720000,
+        tpmRemaining: 1780000,
+        dailyTokenQuota: 30000000,
+        dailyTokenUsed: 12400000,
+        dailyTokenRemaining: 17600000,
+        dailyRequestQuota: 15000,
+        dailyRequestUsed: 3890,
+        dailyRequestRemaining: 11110,
+        concurrencyLimit: 45,
+        concurrencyCurrent: 9,
+        upcomingWindowResetSeconds: slidingSecs,
+        upcomingDailyResetUtc: midnightUtc,
+        p95LatencyMs: 120,
+        lastRequestAt: new Date(Date.now() - 4 * 1000).toISOString(),
+        hourlySparkline: [80, 95, 110, 130, 125, 140, 155, 142, 138, 148, 160, 142]
+      },
+      {
+        serviceId: 'text-embedding-004',
+        serviceName: 'Text Embedding 004 (Vector Grounding & Search)',
+        modelIdentifier: 'models/text-embedding-004',
+        category: 'Vector Grounding',
+        status: 'healthy',
+        rpmQuota: 1500,
+        rpmUsed: 310,
+        rpmRemaining: 1190,
+        tpmQuota: 5000000,
+        tpmUsed: 980000,
+        tpmRemaining: 4020000,
+        dailyTokenQuota: 40000000,
+        dailyTokenUsed: 14200000,
+        dailyTokenRemaining: 25800000,
+        dailyRequestQuota: 35000,
+        dailyRequestUsed: 8120,
+        dailyRequestRemaining: 26880,
+        concurrencyLimit: 80,
+        concurrencyCurrent: 18,
+        upcomingWindowResetSeconds: slidingSecs,
+        upcomingDailyResetUtc: midnightUtc,
+        p95LatencyMs: 45,
+        lastRequestAt: new Date(Date.now() - 2 * 1000).toISOString(),
+        hourlySparkline: [210, 240, 260, 290, 310, 305, 320, 310, 295, 330, 340, 310]
+      },
+      {
+        serviceId: 'claude-failover',
+        serviceName: 'Anthropic Claude 3.5 Sonnet (Multi-Model Failover)',
+        modelIdentifier: 'anthropic/claude-3-5-sonnet',
+        category: 'Failover Redundancy',
+        status: 'standby',
+        rpmQuota: 500,
+        rpmUsed: 0,
+        rpmRemaining: 500,
+        tpmQuota: 1000000,
+        tpmUsed: 0,
+        tpmRemaining: 1000000,
+        dailyTokenQuota: 10000000,
+        dailyTokenUsed: 0,
+        dailyTokenRemaining: 10000000,
+        dailyRequestQuota: 5000,
+        dailyRequestUsed: 0,
+        dailyRequestRemaining: 5000,
+        concurrencyLimit: 20,
+        concurrencyCurrent: 0,
+        upcomingWindowResetSeconds: slidingSecs,
+        upcomingDailyResetUtc: midnightUtc,
+        p95LatencyMs: 320,
+        lastRequestAt: new Date(Date.now() - 3600 * 1000).toISOString(),
+        hourlySparkline: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      }
+    ];
+
+    this.throttleEvents = [
+      {
+        id: 'throt_ev_01',
+        timestamp: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+        serviceId: 'gemini-2.5-pro',
+        reason: 'Temporary concurrency peak (32/30 streams) during batch PRD generation',
+        retryAfterSeconds: 4
+      }
+    ];
+  }
+
+  getAiRateLimiterOverview(): AiGatewayRateLimiterOverview {
+    const now = new Date();
+    const midnightUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0)).toISOString();
+    const slidingSecs = 60 - (Math.floor(Date.now() / 1000) % 60);
+
+    const services = this.aiServices.map(s => ({
+      ...s,
+      upcomingWindowResetSeconds: slidingSecs,
+      upcomingDailyResetUtc: midnightUtc
+    }));
+
+    const totalDailyRequestsQuota = services.reduce((acc, s) => acc + s.dailyRequestQuota, 0);
+    const totalDailyRequestsUsed = services.reduce((acc, s) => acc + s.dailyRequestUsed, 0);
+    const totalDailyRequestsRemaining = Math.max(0, totalDailyRequestsQuota - totalDailyRequestsUsed);
+
+    const totalDailyTokensQuota = services.reduce((acc, s) => acc + s.dailyTokenQuota, 0);
+    const totalDailyTokensUsed = services.reduce((acc, s) => acc + s.dailyTokenUsed, 0);
+    const totalDailyTokensRemaining = Math.max(0, totalDailyTokensQuota - totalDailyTokensUsed);
+
+    const activeConcurrency = services.reduce((acc, s) => acc + s.concurrencyCurrent, 0);
+    const maxConcurrency = services.reduce((acc, s) => acc + s.concurrencyLimit, 0);
+
+    const hasThrottled = services.some(s => s.status === 'throttled');
+    const hasApproaching = services.some(s => s.status === 'approaching_limit');
+    const overallStatus: 'optimal' | 'warning' | 'throttled' = hasThrottled ? 'throttled' : (hasApproaching ? 'warning' : 'optimal');
+
+    return {
+      overallStatus,
+      tier: 'Enterprise Scale',
+      slidingWindowSeconds: 60,
+      upcomingWindowResetSeconds: slidingSecs,
+      upcomingDailyResetUtc: midnightUtc,
+      totalDailyRequestsQuota,
+      totalDailyRequestsUsed,
+      totalDailyRequestsRemaining,
+      totalDailyTokensQuota,
+      totalDailyTokensUsed,
+      totalDailyTokensRemaining,
+      activeConcurrency,
+      maxConcurrency,
+      services,
+      tokenBuckets: [
+        {
+          bucketId: 'tb_gemini_cascade',
+          name: 'Gemini Cascade Request Token Bucket',
+          capacity: 1000,
+          currentTokens: 782,
+          fillPercentage: 78.2,
+          refillRatePerSec: 16.6,
+          algorithm: 'Token Bucket'
+        },
+        {
+          bucketId: 'tb_tpm_tokens',
+          name: 'Enterprise Organization Token Budget',
+          capacity: 50000000,
+          currentTokens: totalDailyTokensRemaining,
+          fillPercentage: Math.round((totalDailyTokensRemaining / totalDailyTokensQuota) * 1000) / 10,
+          refillRatePerSec: 578.7,
+          algorithm: 'Sliding Window Counter'
+        },
+        {
+          bucketId: 'tb_concurrency_slots',
+          name: 'Global In-Flight Concurrency Leaky Bucket',
+          capacity: maxConcurrency,
+          currentTokens: maxConcurrency - activeConcurrency,
+          fillPercentage: Math.round(((maxConcurrency - activeConcurrency) / maxConcurrency) * 1000) / 10,
+          refillRatePerSec: 25.0,
+          algorithm: 'Leaky Bucket'
+        }
+      ],
+      recentThrottleEvents: this.throttleEvents
+    };
+  }
+
+  simulateAiTraffic(params: {
+    serviceId: string;
+    requestsCount: number;
+    tokensCount: number;
+    forceThrottle?: boolean;
+  }): { success: boolean; throttled: boolean; retryAfter?: number; service: AiServiceQuota } {
+    const service = this.aiServices.find(s => s.serviceId === params.serviceId) || this.aiServices[0];
+    
+    if (params.forceThrottle) {
+      service.status = 'throttled';
+      service.rpmUsed = service.rpmQuota;
+      service.rpmRemaining = 0;
+      service.retryAfterSeconds = 12;
+      this.throttleEvents.unshift({
+        id: `throt_ev_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        serviceId: service.serviceId,
+        reason: `Manual simulation test: Forced 429 Too Many Requests on ${service.serviceName}`,
+        retryAfterSeconds: 12
+      });
+      return { success: false, throttled: true, retryAfter: 12, service };
+    }
+
+    service.rpmUsed = Math.min(service.rpmQuota, service.rpmUsed + params.requestsCount);
+    service.rpmRemaining = Math.max(0, service.rpmQuota - service.rpmUsed);
+    service.dailyRequestUsed += params.requestsCount;
+    service.dailyRequestRemaining = Math.max(0, service.dailyRequestQuota - service.dailyRequestUsed);
+
+    service.tpmUsed = Math.min(service.tpmQuota, service.tpmUsed + params.tokensCount);
+    service.tpmRemaining = Math.max(0, service.tpmQuota - service.tpmUsed);
+    service.dailyTokenUsed += params.tokensCount;
+    service.dailyTokenRemaining = Math.max(0, service.dailyTokenQuota - service.dailyTokenUsed);
+    service.lastRequestAt = new Date().toISOString();
+
+    const rpmRatio = service.rpmUsed / service.rpmQuota;
+    if (rpmRatio >= 1.0) {
+      service.status = 'throttled';
+      service.retryAfterSeconds = 15;
+    } else if (rpmRatio >= 0.8) {
+      service.status = 'approaching_limit';
+    } else if (service.status !== 'standby') {
+      service.status = 'healthy';
+    }
+
+    return {
+      success: service.status !== 'throttled',
+      throttled: service.status === 'throttled',
+      retryAfter: service.retryAfterSeconds,
+      service
+    };
+  }
+
+  resetAiRateLimits(): void {
+    this.initAiServicesQuotas();
+  }
+
+  seedWebhooks() {
+    const now = Date.now();
+    this.webhooks = [
+      {
+        id: 'wh_jira_agile',
+        name: 'Atlassian Jira Agile Board & Backlog Sync',
+        url: 'https://api.atlassian.com/ex/jira/webhook/product-sync',
+        secret: 'whsec_jira_prod_8829a',
+        enabled: true,
+        events: ['prd.updated', 'user_stories.generated', 'user_stories.updated', 'sprint.planned', 'sprint.updated'],
+        targetService: 'Jira',
+        createdAt: new Date(now - 14 * 86400000).toISOString(),
+        updatedAt: new Date(now - 2 * 86400000).toISOString(),
+        lastDispatchedAt: new Date(now - 18 * 60000).toISOString(),
+        lastStatus: 'success',
+        lastStatusCode: 200,
+        lastLatencyMs: 142,
+        deliveriesCount: 34,
+        failureCount: 0
+      },
+      {
+        id: 'wh_slack_channel',
+        name: 'Slack #product-releases & Launch Alerts',
+        url: 'https://hooks.slack.com/services/T04G/B08M/product-alerts',
+        secret: 'whsec_slack_lead_3914b',
+        enabled: true,
+        events: ['prd.generated', 'prd.updated', 'sprint.planned'],
+        targetService: 'Slack',
+        createdAt: new Date(now - 10 * 86400000).toISOString(),
+        updatedAt: new Date(now - 86400000).toISOString(),
+        lastDispatchedAt: new Date(now - 45 * 60000).toISOString(),
+        lastStatus: 'success',
+        lastStatusCode: 200,
+        lastLatencyMs: 88,
+        deliveriesCount: 22,
+        failureCount: 0
+      },
+      {
+        id: 'wh_linear_bridge',
+        name: 'Linear Issues & Sprint Delivery Bridge',
+        url: 'https://api.linear.app/webhooks/productpilot-bridge',
+        secret: 'whsec_linear_eng_5510c',
+        enabled: true,
+        events: ['user_stories.generated', 'user_stories.updated', 'sprint.planned', 'sprint.updated'],
+        targetService: 'Linear',
+        createdAt: new Date(now - 5 * 86400000).toISOString(),
+        updatedAt: new Date(now - 3600000).toISOString(),
+        lastDispatchedAt: new Date(now - 120 * 60000).toISOString(),
+        lastStatus: 'success',
+        lastStatusCode: 200,
+        lastLatencyMs: 95,
+        deliveriesCount: 17,
+        failureCount: 1
+      },
+      {
+        id: 'wh_github_actions',
+        name: 'GitHub Actions Continuous Spec Dispatch',
+        url: 'https://api.github.com/repos/enterprise-org/core-platform/dispatches',
+        secret: 'whsec_gh_dispatch_9921d',
+        enabled: true,
+        events: ['prd.updated', 'sprint.planned'],
+        targetService: 'GitHub',
+        createdAt: new Date(now - 2 * 86400000).toISOString(),
+        updatedAt: new Date(now - 86400000).toISOString(),
+        lastDispatchedAt: new Date(now - 240 * 60000).toISOString(),
+        lastStatus: 'success',
+        lastStatusCode: 204,
+        lastLatencyMs: 198,
+        deliveriesCount: 9,
+        failureCount: 0
+      }
+    ];
+
+    // Seed initial delivery records
+    this.webhookDeliveries = [
+      {
+        id: 'deliv_seed_01',
+        webhookId: 'wh_jira_agile',
+        webhookName: 'Atlassian Jira Agile Board & Backlog Sync',
+        event: 'user_stories.generated',
+        url: 'https://api.atlassian.com/ex/jira/webhook/product-sync',
+        status: 'success',
+        statusCode: 200,
+        latencyMs: 142,
+        timestamp: new Date(now - 18 * 60000).toISOString(),
+        requestPayload: {
+          event: 'user_stories.generated',
+          deliveryId: 'deliv_seed_01',
+          timestamp: new Date(now - 18 * 60000).toISOString(),
+          webhookId: 'wh_jira_agile',
+          service: 'Jira',
+          data: {
+            productId: 'prod_banking',
+            productName: 'AI Banking App',
+            storiesCount: 6,
+            stories: [
+              { id: 'US-010', title: 'Biometric Passkey Authentication', points: 5, priority: 'P0' },
+              { id: 'US-011', title: 'Automated PSD2 SCA Fallback', points: 3, priority: 'P1' }
+            ]
+          }
+        },
+        responseBody: '{"ok": true, "jiraIssueSync": "SUCCESS", "issuesCreated": 6}',
+        signature: 'sha256=e5a190b4d9ff6701bb172813589b919502ab840001bc93c04294d1b312781290'
+      },
+      {
+        id: 'deliv_seed_02',
+        webhookId: 'wh_slack_channel',
+        webhookName: 'Slack #product-releases & Launch Alerts',
+        event: 'prd.updated',
+        url: 'https://hooks.slack.com/services/T04G/B08M/product-alerts',
+        status: 'success',
+        statusCode: 200,
+        latencyMs: 88,
+        timestamp: new Date(now - 45 * 60000).toISOString(),
+        requestPayload: {
+          event: 'prd.updated',
+          deliveryId: 'deliv_seed_02',
+          timestamp: new Date(now - 45 * 60000).toISOString(),
+          webhookId: 'wh_slack_channel',
+          service: 'Slack',
+          data: {
+            productId: 'prod_banking',
+            productName: 'AI Banking App',
+            version: 2,
+            action: 'APPROVED',
+            approvedBy: 'lead_product_manager',
+            summary: 'Official Specification v2.0 approved and signed'
+          }
+        },
+        responseBody: 'ok',
+        signature: 'sha256=1708819ef3878b66aa10bb21890cf501171801cbbd8419302194901ba34878a1'
+      },
+      {
+        id: 'deliv_seed_03',
+        webhookId: 'wh_linear_bridge',
+        webhookName: 'Linear Issues & Sprint Delivery Bridge',
+        event: 'sprint.planned',
+        url: 'https://api.linear.app/webhooks/productpilot-bridge',
+        status: 'success',
+        statusCode: 200,
+        latencyMs: 95,
+        timestamp: new Date(now - 120 * 60000).toISOString(),
+        requestPayload: {
+          event: 'sprint.planned',
+          deliveryId: 'deliv_seed_03',
+          timestamp: new Date(now - 120 * 60000).toISOString(),
+          webhookId: 'wh_linear_bridge',
+          service: 'Linear',
+          data: {
+            productId: 'prod_banking',
+            sprintName: 'Sprint 1 · Problem Resolution Sprint',
+            storiesCount: 6,
+            velocity: 24,
+            totalPoints: 24
+          }
+        },
+        responseBody: '{"success": true, "cycleId": "linear_cycle_910", "assignedPoints": 24}',
+        signature: 'sha256=49bc802319ef471800adfcb382901171801cbbd8419302194901ba34878a992'
+      }
+    ];
+  }
+
+  getWebhooks(): AppWebhook[] {
+    return this.webhooks;
+  }
+
+  getWebhook(id: string): AppWebhook | undefined {
+    return this.webhooks.find(w => w.id === id);
+  }
+
+  createWebhook(data: {
+    name: string;
+    url: string;
+    secret?: string;
+    enabled?: boolean;
+    events: WebhookEventType[];
+    targetService: 'Jira' | 'Slack' | 'GitHub' | 'Linear' | 'Discord' | 'Custom';
+  }): AppWebhook {
+    const now = new Date().toISOString();
+    const newHook: AppWebhook = {
+      id: `wh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: data.name.trim(),
+      url: data.url.trim(),
+      secret: data.secret?.trim() || `whsec_${Math.random().toString(36).slice(2, 10)}`,
+      enabled: data.enabled !== undefined ? Boolean(data.enabled) : true,
+      events: data.events.length > 0 ? data.events : ['prd.generated', 'user_stories.generated', 'sprint.planned'],
+      targetService: data.targetService || 'Custom',
+      createdAt: now,
+      updatedAt: now,
+      deliveriesCount: 0,
+      failureCount: 0
+    };
+
+    this.webhooks.unshift(newHook);
+    return newHook;
+  }
+
+  updateWebhook(id: string, updates: Partial<AppWebhook>): AppWebhook | null {
+    const hook = this.webhooks.find(w => w.id === id);
+    if (!hook) return null;
+
+    if (updates.name !== undefined) hook.name = updates.name.trim();
+    if (updates.url !== undefined) hook.url = updates.url.trim();
+    if (updates.secret !== undefined) hook.secret = updates.secret.trim();
+    if (updates.enabled !== undefined) hook.enabled = Boolean(updates.enabled);
+    if (updates.events !== undefined && Array.isArray(updates.events)) hook.events = updates.events;
+    if (updates.targetService !== undefined) hook.targetService = updates.targetService;
+    hook.updatedAt = new Date().toISOString();
+
+    return hook;
+  }
+
+  deleteWebhook(id: string): boolean {
+    const index = this.webhooks.findIndex(w => w.id === id);
+    if (index === -1) return false;
+    this.webhooks.splice(index, 1);
+    return true;
+  }
+
+  getWebhookDeliveries(webhookId?: string): WebhookDeliveryLog[] {
+    if (webhookId) {
+      return this.webhookDeliveries.filter(d => d.webhookId === webhookId);
+    }
+    return this.webhookDeliveries;
+  }
+
+  getWebhooksStats(): WebhooksOverviewStats {
+    const totalWebhooks = this.webhooks.length;
+    const activeWebhooks = this.webhooks.filter(w => w.enabled).length;
+    const totalDeliveries = this.webhooks.reduce((acc, w) => acc + (w.deliveriesCount || 0), 0);
+    const totalFailures = this.webhooks.reduce((acc, w) => acc + (w.failureCount || 0), 0);
+    const successRate = totalDeliveries > 0 ? Math.round(((totalDeliveries - totalFailures) / totalDeliveries) * 1000) / 10 : 100;
+    const allEvents = new Set<string>();
+    this.webhooks.forEach(w => w.events.forEach(e => allEvents.add(e)));
+
+    return {
+      totalWebhooks,
+      activeWebhooks,
+      totalDeliveries,
+      successRate,
+      subscribedEventsCount: allEvents.size
+    };
+  }
+
+  async triggerWebhooks(eventType: WebhookEventType, payloadData: any): Promise<WebhookDeliveryLog[]> {
+    const activeHooks = this.webhooks.filter(w => w.enabled && w.events.includes(eventType));
+    const results: WebhookDeliveryLog[] = [];
+
+    for (const hook of activeHooks) {
+      const startMs = Date.now();
+      const deliveryId = `deliv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const timestamp = new Date().toISOString();
+
+      const webhookPayload = {
+        event: eventType,
+        deliveryId,
+        timestamp,
+        webhookId: hook.id,
+        service: hook.targetService,
+        data: payloadData
+      };
+
+      const payloadString = JSON.stringify(webhookPayload, null, 2);
+      const signature = hook.secret
+        ? crypto.createHmac('sha256', hook.secret).update(payloadString).digest('hex')
+        : undefined;
+
+      let statusCode = 200;
+      let status: 'success' | 'failed' = 'success';
+      let latencyMs = Math.round(55 + Math.random() * 80);
+      let responseBody = '{"ok": true, "status": "received"}';
+
+      // Check if URL is real and not a known mock domain
+      const isMockDomain = hook.url.includes('atlassian.com') || 
+                           hook.url.includes('slack.com') || 
+                           hook.url.includes('linear.app') || 
+                           hook.url.includes('github.com');
+
+      if (!isMockDomain && (hook.url.startsWith('http://') || hook.url.startsWith('https://'))) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3500);
+          const res = await fetch(hook.url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': 'Navigator-Webhooks/2.0',
+              'X-Navigator-Event': eventType,
+              'X-Navigator-Delivery': deliveryId,
+              ...(signature ? { 'X-Navigator-Signature': `sha256=${signature}` } : {})
+            },
+            body: payloadString,
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          latencyMs = Date.now() - startMs;
+          statusCode = res.status;
+          responseBody = await res.text().catch(() => '');
+          status = res.ok ? 'success' : 'failed';
+        } catch (err: any) {
+          latencyMs = Date.now() - startMs;
+          statusCode = err.name === 'AbortError' ? 504 : 502;
+          status = 'failed';
+          responseBody = JSON.stringify({ error: err.message });
+        }
+      } else {
+        if (hook.targetService === 'GitHub') {
+          statusCode = 204;
+          responseBody = '';
+        } else if (hook.targetService === 'Slack') {
+          statusCode = 200;
+          responseBody = 'ok';
+        } else if (hook.targetService === 'Linear' || hook.targetService === 'Jira') {
+          statusCode = 200;
+          responseBody = JSON.stringify({ success: true, processedAt: timestamp, eventId: deliveryId });
+        }
+      }
+
+      hook.lastDispatchedAt = timestamp;
+      hook.lastStatus = status;
+      hook.lastStatusCode = statusCode;
+      hook.lastLatencyMs = latencyMs;
+      hook.deliveriesCount = (hook.deliveriesCount || 0) + 1;
+      if (status === 'failed') {
+        hook.failureCount = (hook.failureCount || 0) + 1;
+      }
+
+      const logItem: WebhookDeliveryLog = {
+        id: deliveryId,
+        webhookId: hook.id,
+        webhookName: hook.name,
+        event: eventType,
+        url: hook.url,
+        status,
+        statusCode,
+        latencyMs,
+        timestamp,
+        requestPayload: webhookPayload,
+        responseBody,
+        signature: signature ? `sha256=${signature}` : undefined
+      };
+
+      this.webhookDeliveries.unshift(logItem);
+      results.push(logItem);
+      try {
+        this.onBroadcast?.({
+          type: 'WEBHOOK_EVENT',
+          delivery: logItem,
+          webhook: hook
+        });
+      } catch (e) {
+        console.warn('[Broadcast Webhook Error]', e);
+      }
+    }
+
+    this.webhookDeliveries = this.webhookDeliveries.slice(0, 80);
+    return results;
+  }
+
+  async testWebhook(webhookId: string, sampleEvent?: WebhookEventType): Promise<WebhookDeliveryLog | null> {
+    const hook = this.webhooks.find(w => w.id === webhookId);
+    if (!hook) return null;
+
+    const event = sampleEvent || hook.events[0] || 'prd.generated';
+    let sampleData: any = {};
+
+    switch (event) {
+      case 'prd.generated':
+      case 'prd.updated':
+        sampleData = {
+          productId: 'prod_banking',
+          productName: 'AI Banking App',
+          artifactId: 'art_prd_banking',
+          version: 2,
+          objective: 'Automated Net-30 underwriting and instant biometric KYC authorization',
+          status: 'APPROVED',
+          functionalRequirementsCount: 4,
+          updatedAt: new Date().toISOString()
+        };
+        break;
+      case 'user_stories.generated':
+      case 'user_stories.updated':
+        sampleData = {
+          productId: 'prod_banking',
+          productName: 'AI Banking App',
+          storyId: 'US-010',
+          title: 'Biometric Passkey Authentication Fallback',
+          asA: 'Corporate Treasurer',
+          iWant: 'biometric passkey fallback during checkout verification',
+          soThat: 'time-to-authenticate drops under 4 seconds while preserving PSD2 compliance',
+          points: 5,
+          priority: 'P0',
+          status: 'IN_PROGRESS',
+          riceScore: 2400
+        };
+        break;
+      case 'sprint.planned':
+      case 'sprint.updated':
+        sampleData = {
+          productId: 'prod_banking',
+          productName: 'AI Banking App',
+          sprintName: 'Sprint 1 · Problem Resolution Sprint',
+          velocityPoints: 24,
+          storiesCount: 6,
+          totalPoints: 24,
+          activeStory: 'US-010 Biometric Passkey Authentication Fallback'
+        };
+        break;
+    }
+
+    const startMs = Date.now();
+    const deliveryId = `test_deliv_${Date.now()}`;
+    const timestamp = new Date().toISOString();
+
+    const payload = {
+      event,
+      isTest: true,
+      deliveryId,
+      timestamp,
+      webhookId: hook.id,
+      service: hook.targetService,
+      data: sampleData
+    };
+
+    const payloadString = JSON.stringify(payload, null, 2);
+    const signature = hook.secret
+      ? crypto.createHmac('sha256', hook.secret).update(payloadString).digest('hex')
+      : undefined;
+
+    let statusCode = 200;
+    let status: 'success' | 'failed' = 'success';
+    let latencyMs = Math.round(50 + Math.random() * 60);
+    let responseBody = '{"ok": true, "test": true, "acknowledged": true}';
+
+    const isMockDomain = hook.url.includes('atlassian.com') || 
+                         hook.url.includes('slack.com') || 
+                         hook.url.includes('linear.app') || 
+                         hook.url.includes('github.com');
+
+    if (!isMockDomain && (hook.url.startsWith('http://') || hook.url.startsWith('https://'))) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        const res = await fetch(hook.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Navigator-Webhooks/2.0 (Test)',
+            'X-Navigator-Event': event,
+            'X-Navigator-Delivery': deliveryId,
+            ...(signature ? { 'X-Navigator-Signature': `sha256=${signature}` } : {})
+          },
+          body: payloadString,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        latencyMs = Date.now() - startMs;
+        statusCode = res.status;
+        responseBody = await res.text().catch(() => '');
+        status = res.ok ? 'success' : 'failed';
+      } catch (err: any) {
+        latencyMs = Date.now() - startMs;
+        statusCode = err.name === 'AbortError' ? 504 : 502;
+        status = 'failed';
+        responseBody = JSON.stringify({ error: err.message });
+      }
+    } else {
+      if (hook.targetService === 'GitHub') {
+        statusCode = 204;
+        responseBody = '';
+      } else if (hook.targetService === 'Slack') {
+        statusCode = 200;
+        responseBody = 'ok';
+      }
+    }
+
+    hook.lastDispatchedAt = timestamp;
+    hook.lastStatus = status;
+    hook.lastStatusCode = statusCode;
+    hook.lastLatencyMs = latencyMs;
+    hook.deliveriesCount = (hook.deliveriesCount || 0) + 1;
+    if (status === 'failed') {
+      hook.failureCount = (hook.failureCount || 0) + 1;
+    }
+
+    const logItem: WebhookDeliveryLog = {
+      id: deliveryId,
+      webhookId: hook.id,
+      webhookName: hook.name,
+      event,
+      url: hook.url,
+      status,
+      statusCode,
+      latencyMs,
+      timestamp,
+      requestPayload: payload,
+      responseBody,
+      signature: signature ? `sha256=${signature}` : undefined
+    };
+
+    this.webhookDeliveries.unshift(logItem);
+    this.webhookDeliveries = this.webhookDeliveries.slice(0, 80);
+    try {
+      this.onBroadcast?.({
+        type: 'WEBHOOK_EVENT',
+        delivery: logItem,
+        webhook: hook
+      });
+    } catch (e) {
+      console.warn('[Broadcast Webhook Test Error]', e);
+    }
+    return logItem;
+  }
+
+  async retryWebhookDelivery(deliveryId: string): Promise<WebhookDeliveryLog | null> {
+    const existing = this.webhookDeliveries.find(d => d.id === deliveryId);
+    if (!existing) return null;
+
+    const hook = this.webhooks.find(w => w.id === existing.webhookId);
+    if (!hook) return null;
+
+    return this.testWebhook(hook.id, existing.event);
   }
 }
 

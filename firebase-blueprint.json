@@ -61,6 +61,27 @@
         "createdAt": { "type": "string", "description": "Creation timestamp" }
       },
       "required": ["id", "userId", "productId", "assetType", "title", "createdAt"]
+    },
+    "ArtifactComment": {
+      "title": "ArtifactComment",
+      "description": "Discussion threads on specific requirements and artifact sections",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Comment identifier" },
+        "artifactId": { "type": "string", "description": "Associated artifact identifier" },
+        "productId": { "type": "string", "description": "Associated product workspace identifier" },
+        "targetType": { "type": "string", "description": "PRD, USER_STORIES, REQUIREMENT, STORY" },
+        "requirementId": { "type": "string", "description": "Anchored requirement ID like FR-101 or US-101" },
+        "requirementTitle": { "type": "string", "description": "Requirement title or label" },
+        "authorName": { "type": "string", "description": "Name of commenter" },
+        "authorRole": { "type": "string", "description": "Role of commenter" },
+        "authorAvatarBg": { "type": "string", "description": "Avatar badge color" },
+        "content": { "type": "string", "description": "Comment content" },
+        "status": { "type": "string", "description": "OPEN or RESOLVED" },
+        "tag": { "type": "string", "description": "Categorization tag" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "artifactId", "authorName", "content", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -75,6 +96,10 @@
     "/users/{userId}/artifacts/{artifactId}": {
       "schema": "UserArtifact",
       "description": "User generated PRDs, stories and roadmap artifacts"
+    },
+    "/users/{userId}/artifacts/{artifactId}/comments/{commentId}": {
+      "schema": "ArtifactComment",
+      "description": "Discussion comments on specific requirements"
     },
     "/users/{userId}/aiAssets/{assetId}": {
       "schema": "UserAiAsset",

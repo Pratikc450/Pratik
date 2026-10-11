@@ -11,9 +11,14 @@ import {
   FileText, 
   FolderKanban, 
   X,
-  ExternalLink
+  ExternalLink,
+  FlaskConical,
+  ShieldCheck,
+  ChevronDown,
+  Zap
 } from 'lucide-react';
-import { UserProfile, Product } from '../types.js';
+import { UserProfile, Product, EnvironmentMode } from '../types.js';
+import { ConnectivityIndicator } from './ConnectivityIndicator.js';
 
 interface HeaderProps {
   products: Product[];
@@ -26,6 +31,8 @@ interface HeaderProps {
   onNavigateTab: (tab: string) => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+  environmentMode?: EnvironmentMode;
+  onToggleEnvironment?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -38,7 +45,9 @@ export const Header: React.FC<HeaderProps> = ({
   isFirestoreConnected,
   onNavigateTab,
   searchQuery,
-  setSearchQuery
+  setSearchQuery,
+  environmentMode = 'production',
+  onToggleEnvironment
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -189,8 +198,51 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
-          {/* Right: Notifications & Profile (matching ASCII mockup) */}
+          {/* Right: Environment, Notifications & Profile */}
           <div className="flex items-center space-x-3 shrink-0">
+            {/* WebSocket Heartbeat Connectivity Indicator */}
+            <ConnectivityIndicator onNavigateTab={onNavigateTab} />
+
+            {/* Real-Time Problem Solver Quick Button */}
+            <button
+              onClick={() => onNavigateTab('real-time-solver')}
+              className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-all cursor-pointer shadow-sm active:scale-98"
+              title="Open Real-Time Production Problem Solver"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              <span>Real-Time Solver</span>
+            </button>
+
+            {/* Environment Mode Switcher (Production vs Sandbox) */}
+            <button
+              onClick={onToggleEnvironment}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-medium border transition-all ${
+                environmentMode === 'sandbox'
+                  ? 'bg-amber-950/60 border-amber-600/60 text-amber-300 hover:bg-amber-900/60 shadow-sm'
+                  : 'bg-emerald-950/50 border-emerald-700/50 text-emerald-300 hover:bg-emerald-900/50 shadow-sm'
+              }`}
+              title={`Current Environment: ${environmentMode === 'sandbox' ? 'Sandbox Simulation Lab (Safe Testing)' : 'Live Production'}. Click to switch environment.`}
+            >
+              {environmentMode === 'sandbox' ? (
+                <>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                  <FlaskConical className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="font-mono font-bold tracking-tight text-[11px]">SANDBOX</span>
+                  <span className="hidden xl:inline text-[10px] text-amber-400/80 font-normal">Safe Mode</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="font-mono font-bold tracking-tight text-[11px]">PRODUCTION</span>
+                  <span className="hidden xl:inline text-[10px] text-emerald-400/80 font-normal">Live</span>
+                </>
+              )}
+            </button>
+
             {/* Notifications Popover */}
             <div ref={notificationsRef} className="relative">
               <button

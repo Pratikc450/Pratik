@@ -16,7 +16,9 @@ import {
   Users,
   Plus
 } from 'lucide-react';
-import { Product, UserProfile } from '../types.js';
+import { Product, UserProfile, EnvironmentMode } from '../types.js';
+import { RealTimeProductProblemSolver } from './RealTimeProductProblemSolver.js';
+import { LiveActivityFeed } from './LiveActivityFeed.js';
 
 interface DashboardViewProps {
   products: Product[];
@@ -27,6 +29,9 @@ interface DashboardViewProps {
   user: UserProfile | null;
   tokenBudgetUsed: number;
   tokenBudgetLimit: number;
+  environmentMode?: EnvironmentMode;
+  onToggleEnvironment?: () => void;
+  onRefreshWorkspace?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -37,7 +42,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onQuickGenerateSuite,
   user,
   tokenBudgetUsed,
-  tokenBudgetLimit
+  tokenBudgetLimit,
+  environmentMode = 'production',
+  onToggleEnvironment,
+  onRefreshWorkspace
 }) => {
   const [quickBriefText, setQuickBriefText] = useState('');
   const [quickProductName, setQuickProductName] = useState('');
@@ -248,55 +256,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 3. Central Product Promise Quick Bar */}
-      <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-slate-800 relative overflow-hidden">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-1.5 max-w-xl">
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
-                Central Product Promise
-              </span>
-              <span className="text-xs text-slate-400">1-Brief Autonomous Pipeline</span>
-            </div>
-            <h2 className="text-xl font-bold text-slate-100">
-              “Turn strategy into structured artifacts in seconds.”
-            </h2>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Enter one product brief and automatically generate PRD, Vision, Stories, Roadmaps, OKRs, SWOT, and 13 other artifacts with zero prompt engineering required.
-            </p>
-          </div>
+      {/* 3. Real-Time Production Problem Solver & Multi-Artifact Studio */}
+      <RealTimeProductProblemSolver
+        products={products}
+        selectedProductId={selectedProductId}
+        onSelectProduct={onSelectProduct}
+        onNavigateTab={onNavigateTab}
+        environmentMode={environmentMode}
+        onToggleEnvironment={onToggleEnvironment}
+        onRefreshWorkspace={onRefreshWorkspace}
+      />
 
-          <form onSubmit={handleLaunchQuickBrief} className="flex-1 max-w-lg space-y-3">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={quickProductName}
-                onChange={(e) => setQuickProductName(e.target.value)}
-                placeholder="Product Name (e.g. AI Banking App)"
-                className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={quickBriefText}
-                onChange={(e) => setQuickBriefText(e.target.value)}
-                placeholder="Describe problem or core value proposition..."
-                className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Generate Suite</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
+      {/* 4. Live Activity Feed (Supabase Real-Time Subscriptions & WebSockets) */}
+      <LiveActivityFeed
+        onNavigateTab={onNavigateTab}
+        onSelectProduct={onSelectProduct}
+        selectedProductId={selectedProductId}
+      />
 
-      {/* 4. Recent Projects Section matching ASCII Mockup */}
+      {/* 5. Recent Projects Section matching ASCII Mockup */}
       {/* Recent Projects                             */}
       {/* ┌────────────────────────────────────────┐  */}
       {/* │ AI Banking App      Updated 2h ago    │  */}
