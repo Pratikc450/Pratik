@@ -49,6 +49,25 @@ platform: "Navigator — AI Product Management Platform"
 }
 
 /**
+ * Downloads arbitrary object data as a formatted .json file
+ */
+export function exportToJson(
+  filename: string,
+  data: any
+) {
+  const jsonStr = JSON.stringify(data, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename.endsWith('.json') ? filename : `${filename}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
  * Generates and downloads an executive-quality PDF for any PM Artifact (PRD, Roadmap, User Stories)
  */
 export function exportArtifactPdf(

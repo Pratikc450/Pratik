@@ -3,6 +3,7 @@ import { Settings, Cloud, Shield, Database, Key, Check, RefreshCw, LogIn, LogOut
 import { UserProfile } from '../types.js';
 import { WebhookSettingsManager } from './WebhookSettingsManager.js';
 import { WebhookEventHistory } from './WebhookEventHistory.js';
+import { ApiKeyRotationManager } from './ApiKeyRotationManager.js';
 
 interface SettingsViewProps {
   user: UserProfile | null;
@@ -25,7 +26,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [modelCascade, setModelCascade] = useState('auto');
   const [schemaStrictness, setSchemaStrictness] = useState('strict');
-  const [settingsSection, setSettingsSection] = useState<'all' | 'webhooks' | 'history' | 'cloud' | 'engine'>('all');
+  const [settingsSection, setSettingsSection] = useState<'all' | 'key-rotation' | 'webhooks' | 'history' | 'cloud' | 'engine'>('all');
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -36,7 +37,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <span>Platform Settings</span>
           </h1>
           <p className="mt-1 text-xs text-slate-400">
-            Outbound webhooks, event logs, cloud synchronization, authentication, token quotas, and generation engine parameters.
+            Gemini API key rotation, outbound webhooks, event logs, cloud synchronization, authentication, token quotas, and generation engine parameters.
           </p>
         </div>
 
@@ -52,6 +53,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             }`}
           >
             All Settings
+          </button>
+          <button
+            type="button"
+            onClick={() => setSettingsSection('key-rotation')}
+            className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+              settingsSection === 'key-rotation'
+                ? 'bg-purple-600 text-white font-semibold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Key className="w-3.5 h-3.5" />
+            <span>API Key Rotation</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-950 text-purple-200 border border-purple-800">
+              Zero Downtime
+            </span>
           </button>
           <button
             type="button"
@@ -107,6 +123,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* 0. GEMINI API KEY ZERO-DOWNTIME ROTATION FEATURE */}
+      {(settingsSection === 'all' || settingsSection === 'key-rotation') && (
+        <ApiKeyRotationManager onNavigateTab={onNavigateTab} />
+      )}
 
       {/* 1. OUTBOUND WEBHOOKS MANAGEMENT SYSTEM */}
       {(settingsSection === 'all' || settingsSection === 'webhooks') && (

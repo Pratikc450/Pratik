@@ -867,6 +867,70 @@ export interface ServiceHealthItem {
   lastChecked: string;
 }
 
+export interface LatencyTrendPoint {
+  timestamp: string;
+  geminiMs: number;
+  backendMs: number;
+  totalMs?: number;
+  payloadKb?: number;
+}
+
+export interface DashboardThresholdConfig {
+  latencyUpperMs: number;        // Alert threshold for upper latency spike in ms
+  latencyDropPercent: number;    // Anomaly threshold for sudden drop percentage
+  backendLatencyMs: number;      // Alert threshold for backend proxy SLA in ms
+  payloadSizeKb: number;         // Max payload size alert threshold in KB
+  payloadWarningKb: number;      // Payload size warning threshold in KB
+  enableVisualMarkers: boolean;  // Render threshold reference markers on real-time charts
+  enableSpikeHighlight: boolean; // Automatically highlight spike/drop points in red
+  enableBrowserAlerts: boolean;  // Trigger desktop browser alert on breach
+  enableSoundAlerts: boolean;    // Trigger acoustic chime on breach
+}
+
+export interface ThresholdViolation {
+  metricName: string;
+  configuredThreshold: string;
+  observedValue: string;
+  delta: string;
+  severity: 'critical' | 'warning' | 'info';
+  status: 'VIOLATED' | 'SLA_BREACH' | 'RECOVERED';
+}
+
+export interface CapturedDashboardState {
+  systemStatus: string;
+  productionReadinessScore: number;
+  geminiModel: string;
+  geminiLatencyMs: number;
+  backendLatencyMs: number;
+  totalLatencyMs: number;
+  payloadKb?: number;
+  statusCodeDistribution: { '2xx': number; '4xx': number; '5xx': number };
+  servicesSnapshot: Array<{ id?: string; name: string; endpoint: string; status: string; latencyMs: number; uptime: string }>;
+  endpointViolationsCount: number;
+}
+
+export interface IncidentReport {
+  id: string;
+  timestamp: string;
+  title: string;
+  severity: 'CRITICAL' | 'MAJOR' | 'WARNING';
+  triggerReason: string;
+  observedLatencyMs: number;
+  thresholdLatencyMs: number;
+  status: 'ACTIVE' | 'INVESTIGATING' | 'MITIGATED' | 'RESOLVED';
+  capturedState: CapturedDashboardState;
+  violations: ThresholdViolation[];
+  recentLogs: Array<{ id?: string; timestamp: string; action: string; user: string; details: string; status?: string; latencyMs?: number }>;
+  rootCauseAnalysis: {
+    summary: string;
+    probableCause: string;
+    impactLevel: string;
+    remediationSteps: string[];
+  };
+  generatedBy: string;
+  notes?: string;
+}
+
 export interface ApiHealthMetrics {
   gemini: {
     status: 'operational' | 'degraded' | 'quota_exhausted';
@@ -887,7 +951,7 @@ export interface ApiHealthMetrics {
     successRate: number;
   };
   services: ServiceHealthItem[];
-  latencyTrend: Array<{ timestamp: string; geminiMs: number; backendMs: number }>;
+  latencyTrend: LatencyTrendPoint[];
   statusCodeDistribution: {
     '2xx': number;
     '4xx': number;
@@ -900,6 +964,59 @@ export interface ApiHealthMetrics {
     metric: string;
     threshold: string;
   }>;
+  endpointDistribution?: EndpointDistributionItem[];
+}
+
+export interface EndpointDistributionItem {
+  id: string;
+  endpoint: string;
+  serviceName: string;
+  category: 'generation' | 'reasoning' | 'solver' | 'sandbox' | 'agile' | 'gateway' | 'database' | 'telemetry';
+  totalRequests: number;
+  successCount: number;
+  errorCount: number;
+  successRate: number;
+  errorRate: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+  lastCalled: string;
+  distributionPercent: number;
+  recentStatus: 'healthy' | 'warning' | 'critical';
+  // 1-Minute Sliding Window 5xx Metrics
+  oneMinuteTotalRequests?: number;
+  oneMinute5xxCount?: number;
+  oneMinute5xxErrorRate?: number;
+  is5xxBreached?: boolean;
+}
+
+export interface KeyRotationHistoryEntry {
+  id: string;
+  timestamp: string;
+  initiatedBy: string;
+  previousKeyMask: string;
+  newKeyMask: string;
+  status: 'completed' | 'cancelled' | 'failed';
+  durationSeconds: number;
+  gracePeriodSeconds: number;
+  verifiedLatencyMs: number;
+  requestsServedDuringTransition: number;
+  zeroDowntimeVerified: boolean;
+}
+
+export interface KeyRotationStatus {
+  isRotating: boolean;
+  primaryKeyMask: string;
+  candidateKeyMask: string | null;
+  fallbackKeyMask: string | null;
+  status: 'active' | 'validating' | 'grace_period' | 'completed' | 'cancelled' | 'failed';
+  remainingSeconds: number;
+  totalSeconds: number;
+  startedAt: string | null;
+  gracePeriodEndsAt: string | null;
+  requestsServedByNewKey: number;
+  requestsServedByOldKey: number;
+  lastRotatedAt: string;
+  rotationHistory: KeyRotationHistoryEntry[];
 }
 
 export interface DatabaseTableMeta {
@@ -944,6 +1061,47 @@ export interface SqlQueryResult {
   error?: string;
 }
 
+export interface PushAlertEvent {
+  id: string;
+  timestamp: string;
+  errorRate: number;
+  threshold: number;
+  serviceName: string;
+  details: string;
+  severity: 'warning' | 'critical' | 'recovered';
+}
 
+export interface ApiAlertThresholdConfig {
+  enabled: boolean;
+  thresholdPercent: number; // e.g. 5.0
+  cooldownSeconds: number; // e.g. 60
+  soundEnabled: boolean;
+  desktopNotification: boolean;
+  inAppNotification: boolean;
+}
 
+export interface Endpoint5xxAlertConfig {
+  enabled: boolean;
+  thresholdPercent: number; // default 5.0%
+  windowSeconds: number; // 60s (1-minute window)
+  monitoredEndpoints: string[]; // specific endpoints to monitor
+  minRequestsInWindow: number; // minimum requests in 1m window before alerting (e.g. 3)
+  desktopNotifications: boolean;
+  soundAlerts: boolean;
+  cooldownSeconds: number;
+}
+
+export interface Endpoint5xxAlertEvent {
+  id: string;
+  timestamp: string;
+  endpoint: string;
+  serviceName: string;
+  errorRate5xx: number; // e.g. 12.5%
+  threshold: number; // e.g. 5.0%
+  windowDurationSeconds: number; // 60
+  error5xxCount: number;
+  totalRequestsInWindow: number;
+  severity: 'warning' | 'critical' | 'recovered';
+  details: string;
+}
 

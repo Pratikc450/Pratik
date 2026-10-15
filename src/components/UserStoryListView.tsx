@@ -37,7 +37,14 @@ import {
   Gauge,
   History,
   MessageSquare,
-  Kanban
+  Kanban,
+  Calendar,
+  ArrowRight,
+  Plus,
+  Rocket,
+  Scale,
+  SlidersHorizontal,
+  RefreshCw
 } from 'lucide-react';
 import { Product, GeneratedArtifact } from '../types.js';
 import { 
@@ -211,8 +218,33 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
     effortReasoning?: string;
   } | null>(null);
 
-  // Bulk Selection State for Merged Markdown Export
+  // Bulk Selection State for Merged Markdown Export & Batch Actions
   const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
+  const [isSprintMoveModalOpen, setIsSprintMoveModalOpen] = useState<boolean>(false);
+  const [isBulkRiceModalOpen, setIsBulkRiceModalOpen] = useState<boolean>(false);
+  const [targetSprintName, setTargetSprintName] = useState<string>('Sprint 1 · Core Delivery');
+  const [customSprintNameInput, setCustomSprintNameInput] = useState<string>('');
+  const [isCustomSprintMode, setIsCustomSprintMode] = useState<boolean>(false);
+  const [sprintAdvanceStatus, setSprintAdvanceStatus] = useState<boolean>(true);
+  const [sprintDurationInput, setSprintDurationInput] = useState<string>('2 Weeks');
+  const [sprintGoalInput, setSprintGoalInput] = useState<string>('');
+
+  // Bulk RICE adjustment factor state
+  const [bulkRiceReachMode, setBulkRiceReachMode] = useState<'keep' | 'set' | 'multiply'>('keep');
+  const [bulkRiceReachVal, setBulkRiceReachVal] = useState<number>(3500);
+  const [bulkRiceReachMultiplier, setBulkRiceReachMultiplier] = useState<number>(1.25);
+
+  const [bulkRiceImpactMode, setBulkRiceImpactMode] = useState<'keep' | 'set'>('keep');
+  const [bulkRiceImpactVal, setBulkRiceImpactVal] = useState<number>(2.0);
+
+  const [bulkRiceConfidenceMode, setBulkRiceConfidenceMode] = useState<'keep' | 'set'>('keep');
+  const [bulkRiceConfidenceVal, setBulkRiceConfidenceVal] = useState<number>(0.8);
+
+  const [bulkRiceEffortMode, setBulkRiceEffortMode] = useState<'keep' | 'set' | 'multiply'>('keep');
+  const [bulkRiceEffortVal, setBulkRiceEffortVal] = useState<number>(2.0);
+  const [bulkRiceEffortMultiplier, setBulkRiceEffortMultiplier] = useState<number>(1.0);
+  const [isApplyingBulkRice, setIsApplyingBulkRice] = useState<boolean>(false);
+  const [isMovingSprint, setIsMovingSprint] = useState<boolean>(false);
 
   // View Mode: Standard Flat List vs Functional Modules (AI Clustered) vs Kanban Board
   const [viewMode, setViewMode] = useState<'FLAT' | 'MODULES' | 'KANBAN'>('FLAT');
@@ -959,6 +991,232 @@ ${(s.acceptanceCriteria || []).map((ac: string) => `- [x] ${ac}`).join('\n')}
 
     setSaveSuccessMsg(`✨ Bulk updated priority to "${newPriority}" for ${selectedStoryIds.length} stories.`);
     setTimeout(() => setSaveSuccessMsg(null), 4000);
+  };
+
+  // Bulk RICE Score Calibration Handler
+  const handleApplyBulkRice = async () => {
+    if (selectedStoryIds.length === 0) return;
+    setIsApplyingBulkRice(true);
+
+    try {
+      const updates: any[] = [];
+      const updatedStories = localStories.map(s => {
+        if (!selectedStoryIds.includes(s.id)) return s;
+
+        let reach = s.reach || 1000;
+        if (bulkRiceReachMode === 'set') reach = Math.max(1, bulkRiceReachVal);
+        else if (bulkRiceReachMode === 'multiply') reach = Math.max(1, Math.round(reach * bulkRiceReachMultiplier));
+
+        let impact = s.impact || 2;
+        if (bulkRiceImpactMode === 'set') impact = bulkRiceImpactVal;
+
+        let confidence = s.confidence || 0.8;
+        if (bulkRiceConfidenceMode === 'set') confidence = bulkRiceConfidenceVal;
+
+        let effort = s.effort || 2;
+        if (bulkRiceEffortMode === 'set') effort = Math.max(0.5, bulkRiceEffortVal);
+        else if (bulkRiceEffortMode === 'multiply') effort = Math.max(0.5, Math.round(effort * bulkRiceEffortMultiplier * 10) / 10);
+
+        const riceScore = Math.round((reach * impact * confidence) / effort);
+        const priority = getPriorityTier(riceScore).tier;
+
+        const updated = {
+          ...s,
+          reach,
+          impact,
+          confidence,
+          effort,
+          riceScore,
+          priority
+        };
+
+        updates.push({
+          id: s.id,
+          reach,
+          impact,
+          confidence,
+          effort,
+          riceScore,
+          priority
+        });
+
+        return updated;
+      });
+
+      setLocalStories(updatedStories);
+
+      if (selectedStory && selectedStoryIds.includes(selectedStory.id)) {
+        const matchingUpdated = updatedStories.find(s => s.id === selectedStory.id);
+        if (matchingUpdated) setSelectedStory(matchingUpdated);
+      }
+
+      if (storiesArtifact?.id) {
+        await fetch(`/api/artifacts/${storiesArtifact.id}/stories-bulk`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates })
+        });
+      }
+
+      setSaveSuccessMsg(`✨ Successfully calibrated RICE scores & priorities for ${selectedStoryIds.length} user stories!`);
+      setTimeout(() => setSaveSuccessMsg(null), 4500);
+      setIsBulkRiceModalOpen(false);
+    } catch (err) {
+      console.warn('Failed to bulk update RICE scores', err);
+    } finally {
+      setIsApplyingBulkRice(false);
+    }
+  };
+
+  // Quick One-Click RICE Calibration Presets
+  const handleApplyQuickRicePreset = async (preset: 'boost_reach' | 'high_confidence' | 'reduce_effort' | 'p0_velocity') => {
+    if (selectedStoryIds.length === 0) return;
+
+    const updates: any[] = [];
+    const updatedStories = localStories.map(s => {
+      if (!selectedStoryIds.includes(s.id)) return s;
+
+      let reach = s.reach || 1000;
+      let impact = s.impact || 2;
+      let confidence = s.confidence || 0.8;
+      let effort = s.effort || 2;
+
+      if (preset === 'boost_reach') {
+        reach = Math.round(reach * 1.25);
+      } else if (preset === 'high_confidence') {
+        confidence = 0.9;
+      } else if (preset === 'reduce_effort') {
+        effort = Math.max(0.5, Math.round(effort * 0.75 * 10) / 10);
+      } else if (preset === 'p0_velocity') {
+        reach = Math.max(reach, 4000);
+        impact = 3;
+        confidence = 0.9;
+        effort = Math.min(effort, 2.0);
+      }
+
+      const riceScore = Math.round((reach * impact * confidence) / effort);
+      const priority = getPriorityTier(riceScore).tier;
+
+      const updated = {
+        ...s,
+        reach,
+        impact,
+        confidence,
+        effort,
+        riceScore,
+        priority
+      };
+
+      updates.push({
+        id: s.id,
+        reach,
+        impact,
+        confidence,
+        effort,
+        riceScore,
+        priority
+      });
+
+      return updated;
+    });
+
+    setLocalStories(updatedStories);
+
+    if (selectedStory && selectedStoryIds.includes(selectedStory.id)) {
+      const match = updatedStories.find(s => s.id === selectedStory.id);
+      if (match) setSelectedStory(match);
+    }
+
+    if (storiesArtifact?.id) {
+      try {
+        await fetch(`/api/artifacts/${storiesArtifact.id}/stories-bulk`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates })
+        });
+      } catch (err) {
+        console.warn('Failed to persist quick RICE preset', err);
+      }
+    }
+
+    const presetNames = {
+      boost_reach: '+25% Reach Boost',
+      high_confidence: '90% High Confidence',
+      reduce_effort: '-25% Effort Optimization',
+      p0_velocity: 'P0 Critical Velocity Surge'
+    };
+
+    setSaveSuccessMsg(`⚡ Applied "${presetNames[preset]}" to ${selectedStoryIds.length} user stories!`);
+    setTimeout(() => setSaveSuccessMsg(null), 4000);
+  };
+
+  // Bulk Move Stories to Sprint Handler
+  const handleBulkMoveSprint = async (sprintNameOverride?: string) => {
+    if (selectedStoryIds.length === 0) return;
+    setIsMovingSprint(true);
+
+    const finalSprintName = (sprintNameOverride || (isCustomSprintMode ? customSprintNameInput.trim() : targetSprintName)) || 'Sprint 1 · Core Delivery';
+    const sprintId = finalSprintName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+    try {
+      const updatedStories = localStories.map(s => {
+        if (!selectedStoryIds.includes(s.id)) return s;
+        const shouldAdvance = sprintAdvanceStatus && (s.status === 'BACKLOG' || !s.status);
+        return {
+          ...s,
+          sprint: finalSprintName,
+          sprintId,
+          status: shouldAdvance ? 'READY_FOR_DEV' : s.status
+        };
+      });
+
+      setLocalStories(updatedStories);
+
+      if (selectedStory && selectedStoryIds.includes(selectedStory.id)) {
+        const shouldAdvance = sprintAdvanceStatus && (selectedStory.status === 'BACKLOG' || !selectedStory.status);
+        setSelectedStory((prev: any) => ({
+          ...prev,
+          sprint: finalSprintName,
+          sprintId,
+          status: shouldAdvance ? 'READY_FOR_DEV' : prev.status
+        }));
+      }
+
+      if (storiesArtifact?.id) {
+        await fetch(`/api/artifacts/${storiesArtifact.id}/stories-bulk`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            storyIds: selectedStoryIds,
+            sprint: finalSprintName,
+            sprintId,
+            status: sprintAdvanceStatus ? 'READY_FOR_DEV' : undefined
+          })
+        });
+      }
+
+      const totalEffort = selectedStoryIds.reduce((sum, id) => {
+        const st = localStories.find(s => s.id === id);
+        return sum + (st?.effort || 2);
+      }, 0);
+
+      setSaveSuccessMsg(`🚀 Successfully moved ${selectedStoryIds.length} stories (${totalEffort}w effort) to "${finalSprintName}"!`);
+      setTimeout(() => setSaveSuccessMsg(null), 4500);
+      setIsSprintMoveModalOpen(false);
+      if (isCustomSprintMode) {
+        setCustomSprintNameInput('');
+        setIsCustomSprintMode(false);
+      }
+    } catch (err) {
+      console.warn('Failed to bulk move stories to sprint', err);
+    } finally {
+      setIsMovingSprint(false);
+    }
+  };
+
+  const handleQuickMoveSprint = async (sprintName: string) => {
+    setTargetSprintName(sprintName);
+    await handleBulkMoveSprint(sprintName);
   };
 
   // Update Single Story Status / Priority
@@ -2199,6 +2457,32 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                 Clear
               </button>
 
+              {/* Bulk Update RICE Scores Button */}
+              <button
+                onClick={() => setIsBulkRiceModalOpen(true)}
+                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-purple-950/60 flex items-center gap-1.5 transition-all transform active:scale-95 cursor-pointer border border-purple-400/40"
+                title="Batch calibrate RICE scores, reach, impact, confidence, and effort for selected stories"
+              >
+                <Calculator className="w-4 h-4 text-purple-200" />
+                <span>Update RICE Scores</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-purple-950 text-purple-200 border border-purple-700/60 font-bold">
+                  RICE
+                </span>
+              </button>
+
+              {/* Bulk Move to Sprint Button */}
+              <button
+                onClick={() => setIsSprintMoveModalOpen(true)}
+                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 via-cyan-600 to-blue-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold shadow-lg shadow-blue-950/60 flex items-center gap-1.5 transition-all transform active:scale-95 cursor-pointer border border-blue-400/40"
+                title="Batch move selected stories to an active sprint or create a new sprint"
+              >
+                <Rocket className="w-4 h-4 text-cyan-200" />
+                <span>Move to Sprint</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-950 text-cyan-200 border border-blue-700/60 font-bold">
+                  Sprint
+                </span>
+              </button>
+
               {/* Bulk Approve Button */}
               <button
                 onClick={handleBulkApprove}
@@ -2224,7 +2508,7 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
             </div>
           </div>
 
-          {/* Bottom Row: Bulk Updating Controls for Status and Priority */}
+          {/* Row 2: Bulk Updating Controls for Status and Priority */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1 text-xs">
             {/* Bulk Status Updater */}
             <div className="flex flex-wrap items-center gap-2">
@@ -2280,6 +2564,97 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                   {pr}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Row 3: Bulk Sprint & Bulk RICE Score Quick Actions */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pt-2.5 border-t border-purple-900/40 text-xs">
+            {/* Quick Sprint Allocation */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                <Rocket className="w-3.5 h-3.5 text-blue-400" />
+                <span>Sprint Allocation:</span>
+              </span>
+              <button
+                onClick={() => handleQuickMoveSprint('Sprint 1 · Core Delivery')}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-blue-950/80 hover:bg-blue-900 text-cyan-300 border-blue-700/80 flex items-center gap-1 shadow-xs"
+                title="Move selected stories to Sprint 1 · Core Delivery"
+              >
+                <span>Sprint 1</span>
+              </button>
+              <button
+                onClick={() => handleQuickMoveSprint('Sprint 2 · Merchant Analytics & Scale')}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border-indigo-700/80 flex items-center gap-1 shadow-xs"
+                title="Move selected stories to Sprint 2"
+              >
+                <span>Sprint 2</span>
+              </button>
+              <button
+                onClick={() => handleQuickMoveSprint('Sprint 3 · Automation & Integrations')}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-purple-950/80 hover:bg-purple-900 text-purple-300 border-purple-700/80 flex items-center gap-1 shadow-xs"
+                title="Move selected stories to Sprint 3"
+              >
+                <span>Sprint 3</span>
+              </button>
+              <button
+                onClick={() => handleQuickMoveSprint('Product Backlog (Unassigned)')}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700 flex items-center gap-1 shadow-xs"
+                title="Return selected stories to Backlog"
+              >
+                <span>Backlog</span>
+              </button>
+              <button
+                onClick={() => setIsSprintMoveModalOpen(true)}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-blue-900/60 hover:bg-blue-800 text-cyan-200 border-blue-500/60 flex items-center gap-1 shadow-xs ml-1"
+                title="Open Move to Sprint dialog to select or create a new sprint"
+              >
+                <Plus className="w-3 h-3 text-cyan-300" />
+                <span>Move to Sprint...</span>
+              </button>
+            </div>
+
+            {/* Quick RICE Score Calibration */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                <Calculator className="w-3.5 h-3.5 text-purple-400" />
+                <span>RICE Score:</span>
+              </span>
+              <button
+                onClick={() => handleApplyQuickRicePreset('boost_reach')}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border-emerald-700/80 shadow-xs"
+                title="Increase Reach by 25% for selected stories"
+              >
+                +25% Reach
+              </button>
+              <button
+                onClick={() => handleApplyQuickRicePreset('high_confidence')}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 border-cyan-700/80 shadow-xs"
+                title="Set Confidence to 90% High for selected stories"
+              >
+                90% Conf
+              </button>
+              <button
+                onClick={() => handleApplyQuickRicePreset('reduce_effort')}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-amber-950/80 hover:bg-amber-900 text-amber-300 border-amber-700/80 shadow-xs"
+                title="Reduce Effort by 25% (streamlined delivery) for selected stories"
+              >
+                -25% Effort
+              </button>
+              <button
+                onClick={() => handleApplyQuickRicePreset('p0_velocity')}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-rose-950/80 hover:bg-rose-900 text-rose-300 border-rose-700/80 shadow-xs"
+                title="Apply P0 Velocity Surge parameters"
+              >
+                P0 Surge
+              </button>
+              <button
+                onClick={() => setIsBulkRiceModalOpen(true)}
+                className="px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer bg-purple-900/80 hover:bg-purple-800 text-purple-200 border-purple-500/60 flex items-center gap-1 shadow-xs ml-1"
+                title="Open comprehensive RICE Score Calibration modal"
+              >
+                <SlidersHorizontal className="w-3 h-3 text-purple-300" />
+                <span>Calibrate RICE...</span>
+              </button>
             </div>
           </div>
 
@@ -2376,6 +2751,12 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
                   {story.epicTitle && (
                     <span className="text-[11px] text-slate-400 hidden sm:inline">
                       · {story.epicTitle}
+                    </span>
+                  )}
+                  {story.sprint && (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/15 text-cyan-300 border border-blue-500/30 flex items-center gap-1 shadow-xs" title={`Assigned to ${story.sprint}`}>
+                      <Rocket className="w-3 h-3 text-cyan-400" />
+                      <span>{story.sprint}</span>
                     </span>
                   )}
                 </div>
@@ -3317,6 +3698,620 @@ Metrics: Reach=${story.reach || 1000} | Impact=${story.impact || 2}x | Confidenc
           setCommentCounts({ total, open });
         }}
       />
+
+      {/* ========================================================================= */}
+      {/* BULK MOVE TO SPRINT MODAL                                                */}
+      {/* ========================================================================= */}
+      {isSprintMoveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
+          <div className="w-full max-w-2xl bg-slate-900 border border-blue-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-blue-900/40 bg-gradient-to-r from-blue-950/70 via-slate-900 to-slate-900 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                  <Rocket className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-100">Move Stories to Sprint</h3>
+                    <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                      {selectedStoryIds.length} Selected
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Reassign selected stories to an active delivery cycle or initialize a new sprint.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsSprintMoveModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-5 text-sm">
+              {/* Sprint Destination Options */}
+              <div className="space-y-3">
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Select Destination Sprint
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {[
+                    { name: 'Sprint 1 · Core Delivery', desc: 'Current active iteration · High velocity' },
+                    { name: 'Sprint 2 · Merchant Analytics & Scale', desc: 'Upcoming scheduled sprint' },
+                    { name: 'Sprint 3 · Automation & Integrations', desc: 'Enterprise feature wave' },
+                    { name: 'Product Backlog (Unassigned)', desc: 'Remove from sprint into backlog' },
+                  ].map(sp => (
+                    <button
+                      key={sp.name}
+                      type="button"
+                      onClick={() => {
+                        setTargetSprintName(sp.name);
+                        setIsCustomSprintMode(false);
+                      }}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        !isCustomSprintMode && targetSprintName === sp.name
+                          ? 'bg-blue-950/70 border-blue-500 text-white shadow-md shadow-blue-950/40 ring-1 ring-blue-500/40'
+                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-xs text-slate-100">{sp.name}</span>
+                        {!isCustomSprintMode && targetSprintName === sp.name && (
+                          <Check className="w-4 h-4 text-blue-400" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1">{sp.desc}</p>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom Sprint Card */}
+                <button
+                  type="button"
+                  onClick={() => setIsCustomSprintMode(true)}
+                  className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                    isCustomSprintMode
+                      ? 'bg-blue-950/70 border-blue-500 text-white shadow-md shadow-blue-950/40 ring-1 ring-blue-500/40'
+                      : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Plus className="w-4 h-4 text-blue-400" />
+                      <span className="font-semibold text-xs text-slate-100">Create New Sprint Cycle</span>
+                    </div>
+                    {isCustomSprintMode && <Check className="w-4 h-4 text-blue-400" />}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">Define a brand new sprint with custom iteration dates and goal</p>
+                </button>
+
+                {/* Custom Sprint Inputs */}
+                {isCustomSprintMode && (
+                  <div className="p-4 rounded-xl bg-slate-950/90 border border-blue-500/40 space-y-3 animate-in fade-in">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        New Sprint Name *
+                      </label>
+                      <input
+                        type="text"
+                        value={customSprintNameInput}
+                        onChange={(e) => setCustomSprintNameInput(e.target.value)}
+                        placeholder="e.g. Sprint 4 · Enterprise Compliance & Reporting"
+                        className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          Sprint Duration
+                        </label>
+                        <select
+                          value={sprintDurationInput}
+                          onChange={(e) => setSprintDurationInput(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="1 Week">1 Week (Rapid Spike)</option>
+                          <option value="2 Weeks">2 Weeks (Standard Sprint)</option>
+                          <option value="3 Weeks">3 Weeks (Extended Cycle)</option>
+                          <option value="4 Weeks">4 Weeks (Monthly Release)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1">
+                          Sprint Goal (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={sprintGoalInput}
+                          onChange={(e) => setSprintGoalInput(e.target.value)}
+                          placeholder="e.g. Unblock Net-30 credit line workflows"
+                          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Sprint Options & Auto Status */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={sprintAdvanceStatus}
+                    onChange={(e) => setSprintAdvanceStatus(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500 accent-blue-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-semibold text-slate-200">
+                    Advance backlog stories to "Ready for Dev" upon sprint assignment
+                  </span>
+                </label>
+                <p className="text-[11px] text-slate-400 pl-6.5">
+                  Committed stories transition out of Backlog into active sprint development readiness.
+                </p>
+              </div>
+
+              {/* Selected Stories Review List */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    Stories Being Moved ({selectedStoryIds.length})
+                  </span>
+                  <span className="text-xs font-mono font-bold text-blue-400">
+                    Total Effort: {selectedStoryIds.reduce((sum, id) => {
+                      const s = localStories.find(item => item.id === id);
+                      return sum + (s?.effort || 2);
+                    }, 0)}w
+                  </span>
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                  {localStories.filter(s => selectedStoryIds.includes(s.id)).map(st => (
+                    <div key={st.id} className="p-2 rounded-lg bg-slate-950/70 border border-slate-800 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2 truncate pr-2">
+                        <span className="font-mono font-bold text-purple-300 shrink-0">{st.id}</span>
+                        <span className="text-slate-300 truncate">As a {st.asA}, I want {st.iWant}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] font-mono text-slate-400">
+                          Current: {st.sprint || 'Unassigned'}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300">
+                          {st.effort || 2}w
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setIsSprintMoveModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBulkMoveSprint()}
+                disabled={isMovingSprint || (isCustomSprintMode && !customSprintNameInput.trim())}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold shadow-lg shadow-blue-950/60 flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                {isMovingSprint ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Moving Stories...</span>
+                  </>
+                ) : (
+                  <>
+                    <Rocket className="w-4 h-4" />
+                    <span>Move {selectedStoryIds.length} Stories to {isCustomSprintMode ? (customSprintNameInput.trim() || 'New Sprint') : targetSprintName}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* BULK RICE SCORE CALIBRATION MODAL                                        */}
+      {/* ========================================================================= */}
+      {isBulkRiceModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
+          <div className="w-full max-w-3xl bg-slate-900 border border-purple-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-purple-900/40 bg-gradient-to-r from-purple-950/70 via-slate-900 to-slate-900 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                  <Calculator className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-100">Bulk RICE Score Calibration</h3>
+                    <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      {selectedStoryIds.length} Stories Selected
+                    </span>
+                  </div>
+                  <p className="text-xs text-purple-200/80 mt-0.5">
+                    Calibrate Reach, Impact, Confidence, and Effort with live recalculation across selected stories.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsBulkRiceModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6 text-sm">
+              {/* Quick Presets Bar */}
+              <div>
+                <label className="block text-xs font-bold text-purple-300 uppercase tracking-wider mb-2">
+                  Quick RICE Presets
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkRiceReachMode('multiply');
+                      setBulkRiceReachMultiplier(1.3);
+                      setBulkRiceImpactMode('set');
+                      setBulkRiceImpactVal(3.0);
+                      setBulkRiceConfidenceMode('set');
+                      setBulkRiceConfidenceVal(0.9);
+                      setBulkRiceEffortMode('keep');
+                    }}
+                    className="p-2.5 rounded-xl bg-slate-950/80 hover:bg-purple-950/50 border border-slate-800 hover:border-purple-500/50 text-left transition-all cursor-pointer"
+                  >
+                    <div className="font-bold text-xs text-emerald-300">P0 Velocity Boost</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">+30% Reach · 3x Impact · 90% Conf</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkRiceImpactMode('set');
+                      setBulkRiceImpactVal(3.0);
+                      setBulkRiceConfidenceMode('set');
+                      setBulkRiceConfidenceVal(0.85);
+                      setBulkRiceReachMode('keep');
+                      setBulkRiceEffortMode('keep');
+                    }}
+                    className="p-2.5 rounded-xl bg-slate-950/80 hover:bg-purple-950/50 border border-slate-800 hover:border-purple-500/50 text-left transition-all cursor-pointer"
+                  >
+                    <div className="font-bold text-xs text-cyan-300">High Strategic Value</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">3.0x Impact · 85% Confidence</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkRiceEffortMode('set');
+                      setBulkRiceEffortVal(1.0);
+                      setBulkRiceConfidenceMode('set');
+                      setBulkRiceConfidenceVal(0.95);
+                      setBulkRiceReachMode('keep');
+                      setBulkRiceImpactMode('keep');
+                    }}
+                    className="p-2.5 rounded-xl bg-slate-950/80 hover:bg-purple-950/50 border border-slate-800 hover:border-purple-500/50 text-left transition-all cursor-pointer"
+                  >
+                    <div className="font-bold text-xs text-amber-300">Low Effort Spike</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">1.0w Effort · 95% Confidence</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkRiceReachMode('set');
+                      setBulkRiceReachVal(5000);
+                      setBulkRiceImpactMode('keep');
+                      setBulkRiceConfidenceMode('set');
+                      setBulkRiceConfidenceVal(0.9);
+                      setBulkRiceEffortMode('keep');
+                    }}
+                    className="p-2.5 rounded-xl bg-slate-950/80 hover:bg-purple-950/50 border border-slate-800 hover:border-purple-500/50 text-left transition-all cursor-pointer"
+                  >
+                    <div className="font-bold text-xs text-purple-300">Enterprise Scale</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">5,000 Reach · 90% Confidence</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* 4 RICE Factor Controls */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Reach Control */}
+                <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-200 flex items-center gap-1.5">
+                      <Target className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Reach (Users / Quarter)</span>
+                    </span>
+                    <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[10px] font-mono">
+                      {(['keep', 'set', 'multiply'] as const).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setBulkRiceReachMode(m)}
+                          className={`px-2 py-0.5 rounded cursor-pointer ${bulkRiceReachMode === m ? 'bg-purple-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                        >
+                          {m === 'keep' ? 'Keep' : m === 'set' ? 'Set Exact' : 'Scale'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {bulkRiceReachMode === 'set' && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="number"
+                        min="100"
+                        max="100000"
+                        step="500"
+                        value={bulkRiceReachVal}
+                        onChange={(e) => setBulkRiceReachVal(Math.max(100, Number(e.target.value)))}
+                        className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono"
+                      />
+                      <span className="text-xs text-slate-400 shrink-0">users</span>
+                    </div>
+                  )}
+                  {bulkRiceReachMode === 'multiply' && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <select
+                        value={bulkRiceReachMultiplier}
+                        onChange={(e) => setBulkRiceReachMultiplier(Number(e.target.value))}
+                        className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono cursor-pointer"
+                      >
+                        <option value={1.1}>+10% Surge (1.10x)</option>
+                        <option value={1.25}>+25% Surge (1.25x)</option>
+                        <option value={1.5}>+50% Surge (1.50x)</option>
+                        <option value={2.0}>+100% Surge (2.00x)</option>
+                        <option value={0.8}>-20% Correction (0.80x)</option>
+                      </select>
+                    </div>
+                  )}
+                  {bulkRiceReachMode === 'keep' && (
+                    <p className="text-[11px] text-slate-500 italic">Retains current reach per story</p>
+                  )}
+                </div>
+
+                {/* Impact Control */}
+                <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-200 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Impact (Strategic Multiplier)</span>
+                    </span>
+                    <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[10px] font-mono">
+                      {(['keep', 'set'] as const).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setBulkRiceImpactMode(m)}
+                          className={`px-2 py-0.5 rounded cursor-pointer ${bulkRiceImpactMode === m ? 'bg-purple-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                        >
+                          {m === 'keep' ? 'Keep' : 'Set Exact'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {bulkRiceImpactMode === 'set' ? (
+                    <select
+                      value={bulkRiceImpactVal}
+                      onChange={(e) => setBulkRiceImpactVal(Number(e.target.value))}
+                      className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono cursor-pointer"
+                    >
+                      <option value={0.5}>0.5x · Minimal Impact</option>
+                      <option value={1.0}>1.0x · Low Impact</option>
+                      <option value={2.0}>2.0x · Medium Impact</option>
+                      <option value={3.0}>3.0x · High Impact</option>
+                      <option value={5.0}>5.0x · Massive Impact</option>
+                    </select>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 italic">Retains current impact per story</p>
+                  )}
+                </div>
+
+                {/* Confidence Control */}
+                <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-200 flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Confidence (Evidence & Rigor)</span>
+                    </span>
+                    <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[10px] font-mono">
+                      {(['keep', 'set'] as const).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setBulkRiceConfidenceMode(m)}
+                          className={`px-2 py-0.5 rounded cursor-pointer ${bulkRiceConfidenceMode === m ? 'bg-purple-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                        >
+                          {m === 'keep' ? 'Keep' : 'Set Exact'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {bulkRiceConfidenceMode === 'set' ? (
+                    <select
+                      value={bulkRiceConfidenceVal}
+                      onChange={(e) => setBulkRiceConfidenceVal(Number(e.target.value))}
+                      className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono cursor-pointer"
+                    >
+                      <option value={0.5}>50% · Moonshot / Low Confidence</option>
+                      <option value={0.65}>65% · Experimental Hypothesis</option>
+                      <option value={0.8}>80% · Medium / Telemetry Supported</option>
+                      <option value={0.9}>90% · High / Proven Demand</option>
+                      <option value={1.0}>100% · Absolute Certainty</option>
+                    </select>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 italic">Retains current confidence per story</p>
+                  )}
+                </div>
+
+                {/* Effort Control */}
+                <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs text-slate-200 flex items-center gap-1.5">
+                      <Gauge className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Effort (Person-Weeks)</span>
+                    </span>
+                    <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[10px] font-mono">
+                      {(['keep', 'set', 'multiply'] as const).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setBulkRiceEffortMode(m)}
+                          className={`px-2 py-0.5 rounded cursor-pointer ${bulkRiceEffortMode === m ? 'bg-purple-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                        >
+                          {m === 'keep' ? 'Keep' : m === 'set' ? 'Set Exact' : 'Scale'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {bulkRiceEffortMode === 'set' && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="number"
+                        min="0.5"
+                        max="20"
+                        step="0.5"
+                        value={bulkRiceEffortVal}
+                        onChange={(e) => setBulkRiceEffortVal(Math.max(0.5, Number(e.target.value)))}
+                        className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono"
+                      />
+                      <span className="text-xs text-slate-400 shrink-0">weeks</span>
+                    </div>
+                  )}
+                  {bulkRiceEffortMode === 'multiply' && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <select
+                        value={bulkRiceEffortMultiplier}
+                        onChange={(e) => setBulkRiceEffortMultiplier(Number(e.target.value))}
+                        className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono cursor-pointer"
+                      >
+                        <option value={0.75}>-25% Streamlined Delivery (0.75x)</option>
+                        <option value={0.9}>-10% Optimization (0.90x)</option>
+                        <option value={1.25}>+25% Scope Buffer (1.25x)</option>
+                        <option value={1.5}>+50% Risk Buffer (1.50x)</option>
+                      </select>
+                    </div>
+                  )}
+                  {bulkRiceEffortMode === 'keep' && (
+                    <p className="text-[11px] text-slate-500 italic">Retains current effort estimate per story</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Live Recalculated Preview Table */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    Projected RICE Calibration Preview
+                  </span>
+                  <span className="text-xs text-purple-300 font-mono">
+                    Formula: (Reach × Impact × Confidence) / Effort
+                  </span>
+                </div>
+
+                <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/80 divide-y divide-slate-850">
+                  {localStories.filter(s => selectedStoryIds.includes(s.id)).map(st => {
+                    let nextReach = st.reach || 1000;
+                    if (bulkRiceReachMode === 'set') nextReach = Math.max(1, bulkRiceReachVal);
+                    else if (bulkRiceReachMode === 'multiply') nextReach = Math.max(1, Math.round(nextReach * bulkRiceReachMultiplier));
+
+                    let nextImpact = st.impact || 2;
+                    if (bulkRiceImpactMode === 'set') nextImpact = bulkRiceImpactVal;
+
+                    let nextConfidence = st.confidence || 0.8;
+                    if (bulkRiceConfidenceMode === 'set') nextConfidence = bulkRiceConfidenceVal;
+
+                    let nextEffort = st.effort || 2;
+                    if (bulkRiceEffortMode === 'set') nextEffort = Math.max(0.5, bulkRiceEffortVal);
+                    else if (bulkRiceEffortMode === 'multiply') nextEffort = Math.max(0.5, Math.round(nextEffort * bulkRiceEffortMultiplier * 10) / 10);
+
+                    const currentScore = st.riceScore || Math.round(((st.reach || 1000) * (st.impact || 2) * (st.confidence || 0.8)) / (st.effort || 2));
+                    const projectedScore = Math.round((nextReach * nextImpact * nextConfidence) / nextEffort);
+                    const scoreDelta = projectedScore - currentScore;
+                    const nextTier = getPriorityTier(projectedScore);
+
+                    return (
+                      <div key={st.id} className="p-3 flex items-center justify-between gap-3 text-xs hover:bg-slate-900/50 transition-colors">
+                        <div className="truncate min-w-0 pr-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-purple-300">{st.id}</span>
+                            <span className="text-slate-400 text-[11px] truncate">{st.persona}</span>
+                          </div>
+                          <p className="text-slate-300 text-xs truncate mt-0.5">
+                            As a {st.asA}, I want {st.iWant}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-4 shrink-0 font-mono">
+                          <div className="text-right">
+                            <div className="text-[10px] text-slate-500">Current</div>
+                            <div className="text-slate-300 font-bold">{currentScore}</div>
+                          </div>
+                          <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
+                          <div className="text-right">
+                            <div className="text-[10px] text-purple-400">Projected</div>
+                            <div className="text-purple-300 font-bold text-sm">{projectedScore}</div>
+                          </div>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                            scoreDelta > 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                            scoreDelta < 0 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
+                            'bg-slate-800 text-slate-400'
+                          }`}>
+                            {scoreDelta > 0 ? `+${scoreDelta}` : scoreDelta}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${nextTier.badge}`}>
+                            {nextTier.tier}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-purple-900/40 bg-slate-950 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setIsBulkRiceModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyBulkRice}
+                disabled={isApplyingBulkRice}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-purple-950/60 flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer border border-purple-400/40"
+              >
+                {isApplyingBulkRice ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Calibrating Stories...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                    <span>Apply RICE Calibration to {selectedStoryIds.length} Stories</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

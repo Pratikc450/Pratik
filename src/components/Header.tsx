@@ -15,10 +15,12 @@ import {
   FlaskConical,
   ShieldCheck,
   ChevronDown,
-  Zap
+  Zap,
+  Key
 } from 'lucide-react';
 import { UserProfile, Product, EnvironmentMode } from '../types.js';
 import { ConnectivityIndicator } from './ConnectivityIndicator.js';
+import { GeminiApiKeyModal } from './GeminiApiKeyModal.js';
 
 interface HeaderProps {
   products: Product[];
@@ -52,6 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(3);
 
   const notificationsRef = useRef<HTMLDivElement>(null);
@@ -202,6 +205,21 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center space-x-3 shrink-0">
             {/* WebSocket Heartbeat Connectivity Indicator */}
             <ConnectivityIndicator onNavigateTab={onNavigateTab} />
+
+            {/* Gemini API Key Quick Sentinel Pill */}
+            <button
+              onClick={() => setShowApiKeyModal(true)}
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-750 hover:border-indigo-500/50 transition-all cursor-pointer shadow-sm active:scale-98 group"
+              title="Gemini API Key Sentinel: Active & Verified. Click for key details, live probe & instant rotation."
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <Key className="w-3.5 h-3.5 text-indigo-400 group-hover:rotate-12 transition-transform" />
+              <span className="font-mono text-[11px] text-slate-200">Gemini Key</span>
+              <span className="hidden xl:inline px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[10px]">Active</span>
+            </button>
 
             {/* Real-Time Problem Solver Quick Button */}
             <button
@@ -369,6 +387,13 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Gemini API Key Sentinel Modal */}
+      <GeminiApiKeyModal
+        isOpen={showApiKeyModal}
+        onClose={() => setShowApiKeyModal(false)}
+        onNavigateTab={onNavigateTab}
+      />
     </header>
   );
 };

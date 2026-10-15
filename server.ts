@@ -13,7 +13,19 @@ import { PROMPT_TEMPLATES } from './src/server/promptTemplates.js';
 import { ArtifactType } from './src/types.js';
 import { renderArtifactToProse } from './src/server/renderer.js';
 import { aiRouter } from './src/server/aiRouter.js';
-import { getGeminiClient, pingGemini, resetQuotaState, getQuotaStatus, isGeminiQuotaExhausted } from './src/server/geminiClient.js';
+import {
+  getGeminiClient,
+  pingGemini,
+  resetQuotaState,
+  getQuotaStatus,
+  isGeminiQuotaExhausted,
+  initiateKeyRotation,
+  completeKeyRotation,
+  cancelKeyRotation,
+  getKeyRotationStatus,
+  setKeyRotationBroadcaster,
+  instantUpdateApiKey
+} from './src/server/geminiClient.js';
 import {
   validateBody,
   validateQuery,
@@ -83,6 +95,266 @@ async function startServer() {
     broadcastRealtime(eventData);
   };
 
+  // Centralized Gemini API Key Zero-Downtime Broadcaster
+  setKeyRotationBroadcaster((rotEvent) => {
+    broadcastRealtime(rotEvent);
+  });
+
+  // =========================================================================
+  // Per-Endpoint Request & Health Distribution Tracker
+  // =========================================================================
+  interface EndpointDistributionRecord {
+    id: string;
+    endpoint: string;
+    serviceName: string;
+    category: 'generation' | 'reasoning' | 'solver' | 'sandbox' | 'agile' | 'gateway' | 'database' | 'telemetry';
+    totalRequests: number;
+    successCount: number;
+    errorCount: number;
+    avgLatencyMs: number;
+    p95LatencyMs: number;
+    lastCalled: string;
+    recentStatus: 'healthy' | 'warning' | 'critical';
+  }
+
+  const endpointDistributionStore: Record<string, EndpointDistributionRecord> = {
+    '/api/generate': {
+      id: 'ep_generate',
+      endpoint: '/api/generate',
+      serviceName: 'Autonomous 19-Artifact Generation Engine',
+      category: 'generation',
+      totalRequests: 1420,
+      successCount: 1418,
+      errorCount: 2,
+      avgLatencyMs: 142,
+      p95LatencyMs: 285,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/ai/chat': {
+      id: 'ep_ai_chat',
+      endpoint: '/api/ai/chat',
+      serviceName: 'Multi-Turn Copilot & Reasoning Gateway',
+      category: 'reasoning',
+      totalRequests: 980,
+      successCount: 977,
+      errorCount: 3,
+      avgLatencyMs: 115,
+      p95LatencyMs: 240,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/products/solve-issue': {
+      id: 'ep_solve_issue',
+      endpoint: '/api/products/solve-issue',
+      serviceName: 'Real-Time Multi-Artifact Problem Solver',
+      category: 'solver',
+      totalRequests: 320,
+      successCount: 320,
+      errorCount: 0,
+      avgLatencyMs: 168,
+      p95LatencyMs: 310,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/sandbox/status': {
+      id: 'ep_sandbox_status',
+      endpoint: '/api/sandbox/status',
+      serviceName: 'Sandbox Resiliency & Chaos Engine',
+      category: 'sandbox',
+      totalRequests: 410,
+      successCount: 408,
+      errorCount: 2,
+      avgLatencyMs: 28,
+      p95LatencyMs: 65,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/sprint': {
+      id: 'ep_sprint',
+      endpoint: '/api/sprint',
+      serviceName: 'Sprint Velocity & RICE Scoring Engine',
+      category: 'agile',
+      totalRequests: 540,
+      successCount: 539,
+      errorCount: 1,
+      avgLatencyMs: 36,
+      p95LatencyMs: 78,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/gateway/keys': {
+      id: 'ep_gateway_keys',
+      endpoint: '/api/gateway/keys',
+      serviceName: 'Developer REST API Gateway',
+      category: 'gateway',
+      totalRequests: 290,
+      successCount: 290,
+      errorCount: 0,
+      avgLatencyMs: 22,
+      p95LatencyMs: 50,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/products': {
+      id: 'ep_products',
+      endpoint: '/api/products',
+      serviceName: 'Cloud Database & PostgreSQL Sync',
+      category: 'database',
+      totalRequests: 620,
+      successCount: 619,
+      errorCount: 1,
+      avgLatencyMs: 19,
+      p95LatencyMs: 45,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/ai/health/probe': {
+      id: 'ep_probe',
+      endpoint: '/api/ai/health/probe',
+      serviceName: 'API Health & Latency Probe',
+      category: 'telemetry',
+      totalRequests: 165,
+      successCount: 165,
+      errorCount: 0,
+      avgLatencyMs: 125,
+      p95LatencyMs: 210,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/ai/key/rotate': {
+      id: 'ep_key_rotate',
+      endpoint: '/api/ai/key/rotate',
+      serviceName: 'Gemini Key Rotation & Zero-Downtime Engine',
+      category: 'gateway',
+      totalRequests: 48,
+      successCount: 48,
+      errorCount: 0,
+      avgLatencyMs: 112,
+      p95LatencyMs: 190,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    },
+    '/api/audit-logs': {
+      id: 'ep_audit_logs',
+      endpoint: '/api/audit-logs',
+      serviceName: 'Live Activity Feed & Audit Trail',
+      category: 'telemetry',
+      totalRequests: 740,
+      successCount: 739,
+      errorCount: 1,
+      avgLatencyMs: 24,
+      p95LatencyMs: 55,
+      lastCalled: new Date().toISOString(),
+      recentStatus: 'healthy'
+    }
+  };
+
+  interface EndpointSample {
+    timestamp: number;
+    statusCode: number;
+    latencyMs: number;
+    is5xx: boolean;
+  }
+
+  const endpointRollingSamples: Record<string, EndpointSample[]> = {};
+
+  // Initialize realistic sample rolling data in 1-minute window
+  const initNow = Date.now();
+  Object.keys(endpointDistributionStore).forEach((key, idx) => {
+    endpointRollingSamples[key] = [];
+    const sampleCount = 6 + (idx % 5);
+    for (let i = 0; i < sampleCount; i++) {
+      endpointRollingSamples[key].push({
+        timestamp: initNow - (i * 4500),
+        statusCode: 200,
+        latencyMs: Math.round(25 + Math.random() * 45),
+        is5xx: false
+      });
+    }
+  });
+
+  function recordEndpointMetrics(reqPath: string, statusCode: number, latencyMs: number) {
+    let matchedKey: string | null = null;
+    for (const key of Object.keys(endpointDistributionStore)) {
+      if (reqPath === key || reqPath.startsWith(key)) {
+        matchedKey = key;
+        break;
+      }
+    }
+    if (!matchedKey) {
+      if (reqPath.startsWith('/api/ai')) matchedKey = '/api/ai/chat';
+      else if (reqPath.startsWith('/api/sandbox')) matchedKey = '/api/sandbox/status';
+      else if (reqPath.startsWith('/api/products')) matchedKey = '/api/products';
+      else if (reqPath.startsWith('/api/gateway')) matchedKey = '/api/gateway/keys';
+      else matchedKey = '/api/generate';
+    }
+
+    const item = endpointDistributionStore[matchedKey];
+    if (item) {
+      item.totalRequests += 1;
+      const is5xx = statusCode >= 500 && statusCode < 600;
+      if (statusCode >= 200 && statusCode < 400) {
+        item.successCount += 1;
+      } else {
+        item.errorCount += 1;
+      }
+      item.avgLatencyMs = Math.round((item.avgLatencyMs * 0.9) + (latencyMs * 0.1));
+      item.lastCalled = new Date().toISOString();
+      const errRate = (item.errorCount / item.totalRequests) * 100;
+      item.recentStatus = errRate > 5 ? 'critical' : errRate > 1 ? 'warning' : 'healthy';
+
+      // 1-minute rolling window tracking
+      if (!endpointRollingSamples[matchedKey]) {
+        endpointRollingSamples[matchedKey] = [];
+      }
+      const now = Date.now();
+      endpointRollingSamples[matchedKey].push({
+        timestamp: now,
+        statusCode,
+        latencyMs,
+        is5xx
+      });
+      // Prune requests older than 60,000 ms (1-minute window)
+      endpointRollingSamples[matchedKey] = endpointRollingSamples[matchedKey].filter(
+        s => s.timestamp >= now - 60000
+      );
+    }
+  }
+
+  function getEndpointDistributionList(threshold5xx: number = 5.0) {
+    const totalAllRequests = Object.values(endpointDistributionStore).reduce((acc, curr) => acc + curr.totalRequests, 0) || 1;
+    const now = Date.now();
+
+    return Object.values(endpointDistributionStore).map(item => {
+      // 1-minute rolling window calculation
+      const samples = (endpointRollingSamples[item.endpoint] || []).filter(s => s.timestamp >= now - 60000);
+      endpointRollingSamples[item.endpoint] = samples; // keep pruned
+
+      const oneMinuteTotalRequests = samples.length;
+      const oneMinute5xxCount = samples.filter(s => s.is5xx).length;
+      const oneMinute5xxErrorRate = oneMinuteTotalRequests > 0
+        ? Number(((oneMinute5xxCount / oneMinuteTotalRequests) * 100).toFixed(1))
+        : 0;
+      const is5xxBreached = oneMinuteTotalRequests >= 3 && oneMinute5xxErrorRate > threshold5xx;
+
+      const successRate = Number(((item.successCount / (item.totalRequests || 1)) * 100).toFixed(2));
+      const errorRate = Number(((item.errorCount / (item.totalRequests || 1)) * 100).toFixed(2));
+      const distributionPercent = Number(((item.totalRequests / totalAllRequests) * 100).toFixed(1));
+
+      return {
+        ...item,
+        successRate,
+        errorRate,
+        distributionPercent,
+        oneMinuteTotalRequests,
+        oneMinute5xxCount,
+        oneMinute5xxErrorRate,
+        is5xxBreached
+      };
+    }).sort((a, b) => b.totalRequests - a.totalRequests);
+  }
+
   // API Key Authentication & Traffic Tracking Middleware for Developer Gateway
   app.use((req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -136,6 +408,9 @@ async function startServer() {
         details,
         userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].substring(0, 80) : undefined
       });
+
+      // Update real-time endpoint request & error distribution statistics
+      recordEndpointMetrics(req.path, statusCode, latencyMs);
     });
     next();
   });
@@ -1583,9 +1858,9 @@ Strategic Goals: ${strategicGoals || product.vision}`;
     res.json({ success: true, story, artifact, revertedTo: targetVersion, newVersion: nextVersion });
   });
 
-  // 8b. Bulk Update Stories Status, Priority, and Confidence
+  // 8b. Bulk Update Stories Status, Priority, Sprint, and RICE Metrics
   app.patch('/api/artifacts/:id/stories-bulk', validateBody(BulkStoriesUpdateSchema), (req, res) => {
-    const { storyIds, status, priority, updates } = req.body;
+    const { storyIds, status, priority, sprint, sprintId, riceUpdates, updates } = req.body;
     const artifact = db.getArtifact(req.params.id);
     if (!artifact) {
       return res.status(404).json({ error: 'Artifact not found' });
@@ -1598,14 +1873,26 @@ Strategic Goals: ${strategicGoals || product.vision}`;
         artifact.schemaData.stories = artifact.schemaData.stories.map((s: any) => {
           const up = updateMap.get(s.id);
           if (up) {
-            return {
+            const updated = {
               ...s,
               ...up,
               confidence: up.confidence !== undefined ? up.confidence : s.confidence,
               riceScore: up.riceScore !== undefined ? up.riceScore : s.riceScore,
               priority: up.priority !== undefined ? up.priority : s.priority,
-              status: up.status !== undefined ? up.status : s.status
+              status: up.status !== undefined ? up.status : s.status,
+              sprint: up.sprint !== undefined ? up.sprint : s.sprint,
+              reach: up.reach !== undefined ? up.reach : s.reach,
+              impact: up.impact !== undefined ? up.impact : s.impact,
+              effort: up.effort !== undefined ? up.effort : s.effort
             };
+            if (up.riceScore === undefined && (up.reach !== undefined || up.impact !== undefined || up.confidence !== undefined || up.effort !== undefined)) {
+              const r = updated.reach || 1000;
+              const i = updated.impact || 2;
+              const c = updated.confidence || 0.8;
+              const e = updated.effort || 2;
+              updated.riceScore = Math.round((r * i * c) / e);
+            }
+            return updated;
           }
           return s;
         });
@@ -1616,7 +1903,7 @@ Strategic Goals: ${strategicGoals || product.vision}`;
           taskType: artifact.taskType,
           action: 'MODIFIED',
           userId: 'lead_pm',
-          details: `Confidence & Priority Audit calibrated ${updates.length} stories based on historical delivery telemetry.`
+          details: `Calibrated ${updates.length} stories with updated metrics/sprint assignments.`
         });
       }
       return res.json({ success: true, updatedCount: updates.length, artifact });
@@ -1649,6 +1936,21 @@ Strategic Goals: ${strategicGoals || product.vision}`;
             else if (priority === 'P2') updated.riceScore = 900;
             else if (priority === 'P3') updated.riceScore = 400;
           }
+          if (sprint !== undefined) {
+            updated.sprint = sprint;
+            if (sprintId !== undefined) updated.sprintId = sprintId;
+          }
+          if (riceUpdates) {
+            if (riceUpdates.reach !== undefined) updated.reach = riceUpdates.reach;
+            if (riceUpdates.impact !== undefined) updated.impact = riceUpdates.impact;
+            if (riceUpdates.confidence !== undefined) updated.confidence = riceUpdates.confidence;
+            if (riceUpdates.effort !== undefined) updated.effort = riceUpdates.effort;
+            if (riceUpdates.riceScore !== undefined) {
+              updated.riceScore = riceUpdates.riceScore;
+            } else if (updated.reach && updated.impact && updated.confidence && updated.effort) {
+              updated.riceScore = Math.round((updated.reach * updated.impact * updated.confidence) / updated.effort);
+            }
+          }
           return updated;
         }
         return s;
@@ -1668,7 +1970,7 @@ Strategic Goals: ${strategicGoals || product.vision}`;
         userId: req.body.userId || 'lead_pm',
         details: isApprovalGate 
           ? `Bulk promoted ${storyIds.length} user stories via Human PM Approval Gate`
-          : `Bulk updated ${storyIds.length} stories: ${status ? `status=${status} ` : ''}${priority ? `priority=${priority}` : ''}`
+          : `Bulk updated ${storyIds.length} stories: ${status ? `status=${status} ` : ''}${priority ? `priority=${priority} ` : ''}${sprint ? `sprint="${sprint}" ` : ''}${riceUpdates ? 'RICE scores calibrated ' : ''}`
       });
     }
 
@@ -1934,7 +2236,161 @@ Strategic Goals: ${strategicGoals || product.vision}`;
   // 13. Helper to reset token budget or seed
   app.post('/api/budget/reset', (req, res) => {
     db.tokenBudgetUsed = 4200;
+    broadcastRealtime({
+      type: 'TOKEN_CONSUMPTION_EVENT',
+      consumedTokens: 0,
+      totalUsed: db.tokenBudgetUsed,
+      budgetLimit: db.tokenBudgetLimit,
+      reason: 'Budget Reset to Baseline',
+      timestamp: new Date().toISOString()
+    });
+    broadcastRealtime({
+      type: 'TELEMETRY_UPDATED',
+      tokenBudgetUsed: db.tokenBudgetUsed,
+      tokenBudgetLimit: db.tokenBudgetLimit,
+      timestamp: new Date().toISOString()
+    });
     res.json({ success: true, tokenBudgetUsed: db.tokenBudgetUsed });
+  });
+
+  // 13b. 30-Day Predictive Token Forecast API (§6 Budget & Observability)
+  app.get('/api/telemetry/forecast', (req, res) => {
+    const {
+      growthRate = '0.08',
+      modelTier = 'flash',
+      scenario = 'baseline',
+      customLimit
+    } = req.query as Record<string, string>;
+
+    const currentUsed = db.tokenBudgetUsed;
+    const limit = customLimit ? Number(customLimit) : db.tokenBudgetLimit;
+    const gRate = Math.max(-0.2, Math.min(1.0, parseFloat(growthRate) || 0.08));
+
+    let baseDailyTokens = 1250;
+    if (scenario === 'caching') baseDailyTokens = Math.round(baseDailyTokens * 0.6); // 40% reduction
+    if (scenario === 'repair') baseDailyTokens = Math.round(baseDailyTokens * 0.78); // 22% reduction
+
+    const blendedCostPerM = modelTier === 'pro' ? 2.50 : 0.15;
+
+    const today = new Date();
+    const dataPoints = [];
+    let runningCumulative = currentUsed;
+    let breachDay: number | null = null;
+
+    for (let day = 1; day <= 30; day++) {
+      const forecastDate = new Date(today);
+      forecastDate.setDate(today.getDate() + day);
+      const dateLabel = forecastDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+      const compoundingMultiplier = Math.pow(1 + gRate, day / 7);
+      const cyclical = (day % 14 >= 6 && day % 14 <= 9) ? 1.25 : 1.0;
+      const dailyBurn = Math.round(baseDailyTokens * compoundingMultiplier * cyclical);
+
+      runningCumulative += dailyBurn;
+
+      const uncertaintyPct = 0.08 + (day * 0.005);
+      const upperBound = Math.round(runningCumulative * (1 + uncertaintyPct));
+      const lowerBound = Math.round(runningCumulative * (1 - uncertaintyPct));
+
+      const isBreached = runningCumulative >= limit;
+      if (isBreached && breachDay === null) {
+        breachDay = day;
+      }
+
+      const estimatedCostUsd = Number(((runningCumulative / 1000000) * blendedCostPerM).toFixed(2));
+
+      dataPoints.push({
+        day,
+        date: dateLabel,
+        dailyBurn,
+        projectedCumulative: runningCumulative,
+        upperBound,
+        lowerBound,
+        budgetCap: limit,
+        estimatedCostUsd,
+        isBreached
+      });
+    }
+
+    const projectedTotalTokens = runningCumulative;
+    const totalNewTokensProjected = projectedTotalTokens - currentUsed;
+    const finalCostUsd = Number(((projectedTotalTokens / 1000000) * blendedCostPerM).toFixed(2));
+    const budgetUtilizationPct = Math.round((projectedTotalTokens / limit) * 100);
+
+    const breachDateLabel = breachDay 
+      ? dataPoints[breachDay - 1].date 
+      : null;
+
+    res.json({
+      success: true,
+      currentUsed,
+      budgetLimit: limit,
+      growthRate: gRate,
+      scenario,
+      modelTier,
+      forecastDays: 30,
+      dailyRunRate: baseDailyTokens,
+      projectedTotalTokens,
+      totalNewTokensProjected,
+      finalCostUsd,
+      budgetUtilizationPct,
+      breachDay,
+      breachDateLabel,
+      dataPoints
+    });
+  });
+
+  // 13c. Real-Time WebSocket Token Consumption Pulse & Simulation
+  app.post('/api/telemetry/simulate-token-tick', (req, res) => {
+    const { amount = 850, reason = 'Interactive PRD Generation' } = req.body;
+    const consumed = Number(amount) || 850;
+    db.tokenBudgetUsed += consumed;
+
+    db.addAuditLog({
+      artifactId: 'token_tick_simulation',
+      taskType: 'PRD',
+      action: 'GENERATED',
+      userId: 'Telemetry Simulator',
+      details: `Live token consumption pulse: +${consumed.toLocaleString()} tokens for ${reason}. Cumulative: ${db.tokenBudgetUsed.toLocaleString()} / ${db.tokenBudgetLimit.toLocaleString()}`
+    });
+
+    broadcastRealtime({
+      type: 'TOKEN_CONSUMPTION_EVENT',
+      consumedTokens: consumed,
+      totalUsed: db.tokenBudgetUsed,
+      budgetLimit: db.tokenBudgetLimit,
+      reason,
+      timestamp: new Date().toISOString()
+    });
+
+    broadcastRealtime({
+      type: 'TELEMETRY_UPDATED',
+      tokenBudgetUsed: db.tokenBudgetUsed,
+      tokenBudgetLimit: db.tokenBudgetLimit,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      consumed,
+      totalUsed: db.tokenBudgetUsed,
+      budgetLimit: db.tokenBudgetLimit
+    });
+  });
+
+  // 13d. Token Budget Cap Adjustment
+  app.post('/api/telemetry/budget-config', (req, res) => {
+    const { limit } = req.body;
+    if (limit && Number(limit) > 0) {
+      db.tokenBudgetLimit = Number(limit);
+      broadcastRealtime({
+        type: 'BUDGET_CONFIG_UPDATED',
+        budgetLimit: db.tokenBudgetLimit,
+        timestamp: new Date().toISOString()
+      });
+      return res.json({ success: true, budgetLimit: db.tokenBudgetLimit });
+    }
+    res.status(400).json({ error: 'Invalid budget limit' });
   });
 
   // 14. Validation Failure Telemetry & Schema Drift Observability API
@@ -3497,28 +3953,42 @@ Ensure priority is strictly "P0", "P1", or "P2". Return ONLY valid JSON with no 
   // 24. API HEALTH DASHBOARD & GEMINI API KEY INTEGRATION ENDPOINTS
   // =========================================================================
   
-  // Real-time latency tracking ring buffer
-  const apiHealthLatencyHistory: Array<{ timestamp: string; geminiMs: number; backendMs: number }> = [
-    { timestamp: new Date(Date.now() - 540000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 142, backendMs: 38 },
-    { timestamp: new Date(Date.now() - 480000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 128, backendMs: 42 },
-    { timestamp: new Date(Date.now() - 420000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 185, backendMs: 35 },
-    { timestamp: new Date(Date.now() - 360000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 110, backendMs: 29 },
-    { timestamp: new Date(Date.now() - 300000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 154, backendMs: 44 },
-    { timestamp: new Date(Date.now() - 240000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 132, backendMs: 31 },
-    { timestamp: new Date(Date.now() - 180000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 165, backendMs: 39 },
-    { timestamp: new Date(Date.now() - 120000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 119, backendMs: 27 },
-    { timestamp: new Date(Date.now() - 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 140, backendMs: 34 },
-    { timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 125, backendMs: 30 }
+  // Real-time latency & payload tracking ring buffer
+  const apiHealthLatencyHistory: Array<{ timestamp: string; geminiMs: number; backendMs: number; totalMs: number; payloadKb: number }> = [
+    { timestamp: new Date(Date.now() - 540000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 142, backendMs: 38, totalMs: 180, payloadKb: 45.2 },
+    { timestamp: new Date(Date.now() - 480000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 128, backendMs: 42, totalMs: 170, payloadKb: 52.8 },
+    { timestamp: new Date(Date.now() - 420000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 188, backendMs: 35, totalMs: 223, payloadKb: 135.4 },
+    { timestamp: new Date(Date.now() - 360000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 110, backendMs: 29, totalMs: 139, payloadKb: 38.1 },
+    { timestamp: new Date(Date.now() - 300000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 154, backendMs: 44, totalMs: 198, payloadKb: 61.5 },
+    { timestamp: new Date(Date.now() - 240000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 132, backendMs: 31, totalMs: 163, payloadKb: 48.0 },
+    { timestamp: new Date(Date.now() - 180000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 195, backendMs: 42, totalMs: 237, payloadKb: 142.6 },
+    { timestamp: new Date(Date.now() - 120000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 119, backendMs: 27, totalMs: 146, payloadKb: 41.2 },
+    { timestamp: new Date(Date.now() - 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 140, backendMs: 34, totalMs: 174, payloadKb: 58.7 },
+    { timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), geminiMs: 125, backendMs: 30, totalMs: 155, payloadKb: 49.3 }
   ];
+
+  // In-memory persistent PM Threshold Configuration
+  let dashboardThresholdSettings = {
+    latencyUpperMs: 180,
+    latencyDropPercent: 35,
+    backendLatencyMs: 45,
+    payloadSizeKb: 128,
+    payloadWarningKb: 64,
+    enableVisualMarkers: true,
+    enableSpikeHighlight: true,
+    enableBrowserAlerts: true,
+    enableSoundAlerts: true,
+    updatedAt: new Date().toISOString()
+  };
 
   // 24.1 GET /api/ai/health - Comprehensive API Health & Production Readiness Metrics
   app.get('/api/ai/health', async (req, res) => {
     const quotaInfo = getQuotaStatus();
     const hasKey = quotaInfo.hasApiKey;
     const isExhausted = quotaInfo.isExhausted;
-    const keyMask = hasKey 
+    const keyMask = quotaInfo.keyMasked || (hasKey 
       ? `AIzaSy...${process.env.GEMINI_API_KEY?.slice(-4) || 'prod'}`
-      : 'None (Zero-Downtime Context Shield Active)';
+      : 'None (Zero-Downtime Context Shield Active)');
 
     const healthData = {
       gemini: {
@@ -3539,6 +4009,7 @@ Ensure priority is strictly "P0", "P1", or "P2". Return ONLY valid JSON with no 
         totalRequests24h: 342,
         successRate: 99.7
       },
+      keyRotation: getKeyRotationStatus(),
       services: [
         {
           id: 'svc_gen_engine',
@@ -3607,6 +4078,7 @@ Ensure priority is strictly "P0", "P1", or "P2". Return ONLY valid JSON with no 
           lastChecked: new Date().toISOString()
         }
       ],
+      endpointDistribution: getEndpointDistributionList(),
       latencyTrend: apiHealthLatencyHistory,
       statusCodeDistribution: {
         '2xx': 2841,
@@ -3642,12 +4114,15 @@ Ensure priority is strictly "P0", "P1", or "P2". Return ONLY valid JSON with no 
 
     const backendLatency = Math.round(18 + Math.random() * 20);
     const totalLatency = geminiPingResult.latencyMs + backendLatency;
+    const payloadKb = Number((Math.random() * 30 + 40).toFixed(1));
 
     // Record probe to latency history ring buffer
     const newPoint = {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       geminiMs: geminiPingResult.latencyMs,
-      backendMs: backendLatency
+      backendMs: backendLatency,
+      totalMs: totalLatency,
+      payloadKb
     };
     apiHealthLatencyHistory.push(newPoint);
     if (apiHealthLatencyHistory.length > 15) {
@@ -3663,9 +4138,17 @@ Ensure priority is strictly "P0", "P1", or "P2". Return ONLY valid JSON with no 
       persona: 'Production Health Monitor',
       latencyMs: totalLatency,
       endpoint: '/api/ai/health/probe',
-      details: `Gemini ping: ${geminiPingResult.latencyMs}ms (${geminiPingResult.model}) · Backend roundtrip: ${backendLatency}ms.`
+      details: `Gemini ping: ${geminiPingResult.latencyMs}ms (${geminiPingResult.model}) · Backend: ${backendLatency}ms · Payload: ${payloadKb}KB.`
     });
     sandboxState.recentTelemetry = sandboxState.recentTelemetry.slice(0, 25);
+
+    // Broadcast probe event over WebSocket
+    broadcastRealtime({
+      type: 'REALTIME_HEALTH_PROBE',
+      point: newPoint,
+      latencyHistory: apiHealthLatencyHistory,
+      timestamp: new Date().toISOString()
+    });
 
     res.json({
       success: true,
@@ -3673,11 +4156,429 @@ Ensure priority is strictly "P0", "P1", or "P2". Return ONLY valid JSON with no 
       gemini: geminiPingResult,
       backendLatencyMs: backendLatency,
       totalLatencyMs: totalLatency,
+      payloadKb,
       latencyHistory: apiHealthLatencyHistory
     });
   });
 
-  // 24.3 POST /api/ai/quota/reset - Reset Quota Lockout State
+  // 24.3 GET /api/ai/health/thresholds - Get PM Custom Threshold Configuration
+  app.get('/api/ai/health/thresholds', (req, res) => {
+    res.json({
+      success: true,
+      thresholds: dashboardThresholdSettings
+    });
+  });
+
+  // 24.4 POST /api/ai/health/thresholds - Update PM Custom Threshold Configuration
+  app.post('/api/ai/health/thresholds', (req, res) => {
+    const {
+      latencyUpperMs,
+      latencyDropPercent,
+      backendLatencyMs,
+      payloadSizeKb,
+      payloadWarningKb,
+      enableVisualMarkers,
+      enableSpikeHighlight,
+      enableBrowserAlerts,
+      enableSoundAlerts
+    } = req.body;
+
+    dashboardThresholdSettings = {
+      ...dashboardThresholdSettings,
+      ...(latencyUpperMs !== undefined && { latencyUpperMs: Number(latencyUpperMs) }),
+      ...(latencyDropPercent !== undefined && { latencyDropPercent: Number(latencyDropPercent) }),
+      ...(backendLatencyMs !== undefined && { backendLatencyMs: Number(backendLatencyMs) }),
+      ...(payloadSizeKb !== undefined && { payloadSizeKb: Number(payloadSizeKb) }),
+      ...(payloadWarningKb !== undefined && { payloadWarningKb: Number(payloadWarningKb) }),
+      ...(enableVisualMarkers !== undefined && { enableVisualMarkers: Boolean(enableVisualMarkers) }),
+      ...(enableSpikeHighlight !== undefined && { enableSpikeHighlight: Boolean(enableSpikeHighlight) }),
+      ...(enableBrowserAlerts !== undefined && { enableBrowserAlerts: Boolean(enableBrowserAlerts) }),
+      ...(enableSoundAlerts !== undefined && { enableSoundAlerts: Boolean(enableSoundAlerts) }),
+      updatedAt: new Date().toISOString()
+    };
+
+    broadcastRealtime({
+      type: 'HEALTH_THRESHOLDS_UPDATED',
+      thresholds: dashboardThresholdSettings,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      message: 'Threshold configuration updated successfully.',
+      thresholds: dashboardThresholdSettings
+    });
+  });
+
+  // Incident Report Ring Buffer (Persisted for SRE/PM diagnostics)
+  interface ServerIncidentReport {
+    id: string;
+    timestamp: string;
+    title: string;
+    severity: 'CRITICAL' | 'MAJOR' | 'WARNING';
+    triggerReason: string;
+    observedLatencyMs: number;
+    thresholdLatencyMs: number;
+    status: 'ACTIVE' | 'INVESTIGATING' | 'MITIGATED' | 'RESOLVED';
+    capturedState: {
+      systemStatus: string;
+      productionReadinessScore: number;
+      geminiModel: string;
+      geminiLatencyMs: number;
+      backendLatencyMs: number;
+      totalLatencyMs: number;
+      payloadKb?: number;
+      statusCodeDistribution: { '2xx': number; '4xx': number; '5xx': number };
+      servicesSnapshot: Array<{ id?: string; name: string; endpoint: string; status: string; latencyMs: number; uptime: string }>;
+      endpointViolationsCount: number;
+    };
+    violations: Array<{
+      metricName: string;
+      configuredThreshold: string;
+      observedValue: string;
+      delta: string;
+      severity: 'critical' | 'warning' | 'info';
+      status: 'VIOLATED' | 'SLA_BREACH' | 'RECOVERED';
+    }>;
+    recentLogs: Array<{ id?: string; timestamp: string; action: string; user: string; details: string; status?: string; latencyMs?: number }>;
+    rootCauseAnalysis: {
+      summary: string;
+      probableCause: string;
+      impactLevel: string;
+      remediationSteps: string[];
+    };
+    generatedBy: string;
+    notes?: string;
+  }
+
+  const apiHealthIncidentReports: ServerIncidentReport[] = [
+    {
+      id: `INC-${new Date(Date.now() - 3600000 * 3).toISOString().slice(0, 10).replace(/-/g, '')}-8421`,
+      timestamp: new Date(Date.now() - 3600000 * 3).toISOString(),
+      title: 'Latency Spike Alert: Gemini probe 245ms exceeded 180ms threshold (+36.1%)',
+      severity: 'CRITICAL',
+      triggerReason: 'Automated Real-Time Probe Latency Spike: 245ms exceeded configured threshold of 180ms',
+      observedLatencyMs: 245,
+      thresholdLatencyMs: 180,
+      status: 'RESOLVED',
+      capturedState: {
+        systemStatus: 'DEGRADED',
+        productionReadinessScore: 88,
+        geminiModel: 'gemini-2.5-flash',
+        geminiLatencyMs: 245,
+        backendLatencyMs: 42,
+        totalLatencyMs: 287,
+        payloadKb: 54.2,
+        statusCodeDistribution: { '2xx': 1420, '4xx': 12, '5xx': 3 },
+        servicesSnapshot: [
+          { name: 'Gemini 2.5 Flash Gateway', endpoint: '/api/generate', status: 'degraded', latencyMs: 245, uptime: '99.94%' },
+          { name: 'Context Reasoning Engine', endpoint: '/api/ai/chat', status: 'operational', latencyMs: 142, uptime: '99.98%' },
+          { name: 'Product Generation Proxy', endpoint: '/api/products', status: 'operational', latencyMs: 38, uptime: '100%' }
+        ],
+        endpointViolationsCount: 1
+      },
+      violations: [
+        {
+          metricName: 'Gemini 2.5 Flash API Roundtrip Latency',
+          configuredThreshold: '180ms',
+          observedValue: '245ms',
+          delta: '+65ms (+36.1%)',
+          severity: 'critical',
+          status: 'VIOLATED'
+        }
+      ],
+      recentLogs: [
+        { id: 'log-1', timestamp: new Date(Date.now() - 3600000 * 3 + 12000).toISOString(), action: 'HEALTH_PROBE', user: 'Sentinel Daemon', details: 'Automated probe reported roundtrip 245ms (Threshold 180ms breached)', status: 'WARNING', latencyMs: 245 },
+        { id: 'log-2', timestamp: new Date(Date.now() - 3600000 * 3 + 8000).toISOString(), action: 'API_REQUEST', user: 'Gateway Proxy', details: 'POST /api/generate - 200 OK', status: 'SUCCESS', latencyMs: 238 },
+        { id: 'log-3', timestamp: new Date(Date.now() - 3600000 * 3 + 2000).toISOString(), action: 'API_REQUEST', user: 'Gateway Proxy', details: 'POST /api/ai/chat - 200 OK', status: 'SUCCESS', latencyMs: 135 }
+      ],
+      rootCauseAnalysis: {
+        summary: 'Upstream Google Gemini Gateway experienced transient delay (245ms vs 180ms threshold) during batch processing window.',
+        probableCause: 'High concurrent prompt token serialization and regional network hop jitter.',
+        impactLevel: 'Medium — Temporary latency increase without client timeouts.',
+        remediationSteps: [
+          'Verify Gemini quota usage and model health in Google Cloud Console',
+          'Inspect regional network transit latency between Express server and Google GenAI',
+          'Evaluate prompt payload size caching for repeated context queries',
+          'Ensure automatic circuit breaker fallback is enabled'
+        ]
+      },
+      generatedBy: 'Automated Latency Spike Sentinel',
+      notes: 'Investigated by On-Call PM. Resolved after upstream regional routing normalized.'
+    }
+  ];
+
+  function generateIncidentReportHelper(
+    triggerReason: string,
+    geminiMs: number,
+    backendMs: number,
+    payloadKb?: number,
+    customViolations?: any[]
+  ): ServerIncidentReport {
+    const id = `INC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const timestamp = new Date().toISOString();
+    const thresholdLatency = dashboardThresholdSettings.latencyUpperMs || 180;
+    const deltaMs = Math.max(0, geminiMs - thresholdLatency);
+    const deltaPct = thresholdLatency > 0 ? Math.round((deltaMs / thresholdLatency) * 100) : 0;
+    const severity: 'CRITICAL' | 'MAJOR' | 'WARNING' = geminiMs >= thresholdLatency * 1.35 ? 'CRITICAL' : 'MAJOR';
+
+    const violations = customViolations && customViolations.length > 0 ? [...customViolations] : [];
+    if (geminiMs >= thresholdLatency && !violations.some(v => v.metricName.includes('Gemini'))) {
+      violations.push({
+        metricName: 'Gemini 2.5 Flash API Roundtrip Latency',
+        configuredThreshold: `${thresholdLatency}ms`,
+        observedValue: `${geminiMs}ms`,
+        delta: `+${deltaMs}ms (+${deltaPct}%)`,
+        severity: geminiMs >= thresholdLatency * 1.35 ? 'critical' : 'warning',
+        status: 'VIOLATED'
+      });
+    }
+
+    if (backendMs >= dashboardThresholdSettings.backendLatencyMs) {
+      violations.push({
+        metricName: 'Backend Proxy Gateway Roundtrip SLA',
+        configuredThreshold: `${dashboardThresholdSettings.backendLatencyMs}ms`,
+        observedValue: `${backendMs}ms`,
+        delta: `+${backendMs - dashboardThresholdSettings.backendLatencyMs}ms`,
+        severity: 'warning',
+        status: 'SLA_BREACH'
+      });
+    }
+
+    if (payloadKb && payloadKb >= dashboardThresholdSettings.payloadSizeKb) {
+      violations.push({
+        metricName: 'HTTP Request/Response Payload Envelope Size',
+        configuredThreshold: `${dashboardThresholdSettings.payloadSizeKb} KB`,
+        observedValue: `${payloadKb} KB`,
+        delta: `+${(payloadKb - dashboardThresholdSettings.payloadSizeKb).toFixed(1)} KB`,
+        severity: 'warning',
+        status: 'VIOLATED'
+      });
+    }
+
+    // Capture recent gateway request logs
+    const recentAuditData = db.getApiRequestLogs ? db.getApiRequestLogs(8) : { logs: [] };
+    const recentLogs: Array<{ id?: string; timestamp: string; action: string; user: string; details: string; status?: string; latencyMs?: number }> = (recentAuditData.logs || []).map((l: any) => ({
+      id: l.id,
+      timestamp: l.timestamp,
+      action: `${l.method} ${l.path}`,
+      user: l.apiKeyPrefix || 'Gateway Session',
+      details: `${l.method} ${l.path} handled (${l.statusCode}) in ${l.latencyMs}ms - Outcome: ${l.outcome}`,
+      status: l.statusCode >= 500 ? 'ERROR' : l.statusCode >= 400 ? 'WARNING' : 'SUCCESS',
+      latencyMs: l.latencyMs
+    }));
+
+    if (recentLogs.length === 0) {
+      apiHealthLatencyHistory.slice(-5).forEach((p, idx) => {
+        recentLogs.push({
+          id: `probe-log-${idx}`,
+          timestamp: new Date().toISOString(),
+          action: 'HEALTH_PROBE',
+          user: 'Sentinel Daemon',
+          details: `Probe sample: Gemini ${p.geminiMs}ms, Backend ${p.backendMs}ms, Payload ${p.payloadKb}KB`,
+          status: p.geminiMs >= thresholdLatency ? 'WARNING' : 'SUCCESS',
+          latencyMs: p.geminiMs + p.backendMs
+        });
+      });
+    }
+
+    const report: ServerIncidentReport = {
+      id,
+      timestamp,
+      title: `Latency Spike Alert: Gemini probe ${geminiMs}ms exceeded ${thresholdLatency}ms threshold (+${deltaPct}%)`,
+      severity,
+      triggerReason,
+      observedLatencyMs: geminiMs,
+      thresholdLatencyMs: thresholdLatency,
+      status: 'ACTIVE',
+      capturedState: {
+        systemStatus: geminiMs >= thresholdLatency * 1.5 ? 'CRITICAL_LATENCY' : 'DEGRADED_PERFORMANCE',
+        productionReadinessScore: Math.max(65, Math.round(96 - (deltaPct / 2))),
+        geminiModel: 'gemini-2.5-flash',
+        geminiLatencyMs: geminiMs,
+        backendLatencyMs: backendMs,
+        totalLatencyMs: geminiMs + backendMs,
+        payloadKb: payloadKb || 48.5,
+        statusCodeDistribution: { '2xx': 1650, '4xx': 18, '5xx': 4 },
+        servicesSnapshot: [
+          { name: 'Gemini API Roundtrip Gateway', endpoint: '/api/generate', status: 'degraded', latencyMs: geminiMs, uptime: '99.85%' },
+          { name: 'Telemetry & Metric Ingestion', endpoint: '/api/telemetry', status: 'operational', latencyMs: backendMs, uptime: '100%' },
+          { name: 'Health Probe Sentinel', endpoint: '/api/ai/health/probe', status: 'warning', latencyMs: geminiMs + backendMs, uptime: '99.90%' }
+        ],
+        endpointViolationsCount: violations.length
+      },
+      violations,
+      recentLogs,
+      rootCauseAnalysis: {
+        summary: `Automated latency spike alert triggered at ${timestamp}. Probe roundtrip reached ${geminiMs}ms (+${deltaPct}% over ${thresholdLatency}ms limit).`,
+        probableCause: geminiMs > 300
+          ? 'Severe upstream Google Gemini API latency or network congestion on transit gateway.'
+          : 'Elevated processing duration during prompt evaluation and token generation.',
+        impactLevel: geminiMs > 280 ? 'HIGH — Client operations experience visible delay' : 'MEDIUM — Probe breach detected; user impact localized',
+        remediationSteps: [
+          'Inspect real-time API latency breakdown between Google GenAI SDK and Express proxy',
+          'Check Google Cloud service health and API quota quotas for gemini-2.5-flash',
+          'Verify if large prompt contexts or payload sizes (>64KB) are being evaluated',
+          'Activate fallback fast model routing if latency remains elevated beyond 60s'
+        ]
+      },
+      generatedBy: 'Automated Latency Spike Sentinel'
+    };
+
+    apiHealthIncidentReports.unshift(report);
+    if (apiHealthIncidentReports.length > 30) {
+      apiHealthIncidentReports.pop();
+    }
+
+    // Broadcast incident report event over WebSocket
+    broadcastRealtime({
+      type: 'INCIDENT_REPORT_GENERATED',
+      report,
+      timestamp: new Date().toISOString()
+    });
+
+    return report;
+  }
+
+  // 24.5 POST /api/ai/health/probe-spike - Inject Latency Spike/Drop or Payload Surge for Testing
+  app.post('/api/ai/health/probe-spike', (req, res) => {
+    const { type = 'latency_spike', customValue } = req.body;
+    let geminiMs = 135;
+    let backendMs = 32;
+    let payloadKb = 48.5;
+    let note = '';
+
+    if (type === 'latency_spike') {
+      geminiMs = customValue ? Number(customValue) : Math.round(235 + Math.random() * 50);
+      backendMs = Math.round(48 + Math.random() * 20);
+      payloadKb = Number((Math.random() * 25 + 45).toFixed(1));
+      note = `Simulated Latency Spike injected: ${geminiMs}ms (> ${dashboardThresholdSettings.latencyUpperMs}ms threshold)`;
+    } else if (type === 'latency_drop') {
+      geminiMs = customValue ? Number(customValue) : Math.round(45 + Math.random() * 15);
+      backendMs = Math.round(12 + Math.random() * 8);
+      payloadKb = Number((Math.random() * 20 + 35).toFixed(1));
+      note = `Simulated Latency Anomaly Drop injected: ${geminiMs}ms (abnormally fast)`;
+    } else if (type === 'payload_surge') {
+      geminiMs = Math.round(155 + Math.random() * 30);
+      backendMs = Math.round(35 + Math.random() * 15);
+      payloadKb = customValue ? Number(customValue) : Number((175 + Math.random() * 75).toFixed(1));
+      note = `Simulated Oversized Payload injected: ${payloadKb}KB (> ${dashboardThresholdSettings.payloadSizeKb}KB threshold)`;
+    } else {
+      geminiMs = Math.round(120 + Math.random() * 25);
+      backendMs = Math.round(25 + Math.random() * 10);
+      payloadKb = Number((Math.random() * 30 + 40).toFixed(1));
+      note = `Normal Health Probe: ${geminiMs}ms, ${payloadKb}KB`;
+    }
+
+    const totalMs = geminiMs + backendMs;
+    const newPoint = {
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      geminiMs,
+      backendMs,
+      totalMs,
+      payloadKb
+    };
+
+    apiHealthLatencyHistory.push(newPoint);
+    if (apiHealthLatencyHistory.length > 15) {
+      apiHealthLatencyHistory.shift();
+    }
+
+    // Automatically generate incident report if this is a latency spike or exceeds threshold
+    let incidentReport: ServerIncidentReport | undefined;
+    if (type === 'latency_spike' || geminiMs >= dashboardThresholdSettings.latencyUpperMs) {
+      incidentReport = generateIncidentReportHelper(note, geminiMs, backendMs, payloadKb);
+    }
+
+    // Broadcast probe event over WebSocket
+    broadcastRealtime({
+      type: 'REALTIME_HEALTH_PROBE',
+      point: newPoint,
+      latencyHistory: apiHealthLatencyHistory,
+      note,
+      incidentReport,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      point: newPoint,
+      latencyHistory: apiHealthLatencyHistory,
+      note,
+      incidentReport
+    });
+  });
+
+  // 24.51 GET /api/ai/health/incident-reports - List Captured Incident Reports
+  app.get('/api/ai/health/incident-reports', (req, res) => {
+    res.json({
+      success: true,
+      reports: apiHealthIncidentReports,
+      count: apiHealthIncidentReports.length
+    });
+  });
+
+  // 24.52 POST /api/ai/health/incident-reports - Manually or Programmatically Generate Incident Report
+  app.post('/api/ai/health/incident-reports', (req, res) => {
+    const {
+      triggerReason = 'Manual Diagnostic Snapshot',
+      geminiMs = 195,
+      backendMs = 38,
+      payloadKb = 52,
+      violations,
+      report: providedReport
+    } = req.body;
+
+    if (providedReport && providedReport.id) {
+      apiHealthIncidentReports.unshift(providedReport);
+      if (apiHealthIncidentReports.length > 30) apiHealthIncidentReports.pop();
+      broadcastRealtime({
+        type: 'INCIDENT_REPORT_GENERATED',
+        report: providedReport,
+        timestamp: new Date().toISOString()
+      });
+      return res.json({ success: true, report: providedReport });
+    }
+
+    const report = generateIncidentReportHelper(triggerReason, Number(geminiMs), Number(backendMs), Number(payloadKb), violations);
+    res.json({ success: true, report });
+  });
+
+  // 24.53 PATCH /api/ai/health/incident-reports/:id - Update Incident Report Status or Notes
+  app.patch('/api/ai/health/incident-reports/:id', (req, res) => {
+    const { id } = req.params;
+    const { status, notes } = req.body;
+    const report = apiHealthIncidentReports.find(r => r.id === id);
+    if (!report) {
+      return res.status(404).json({ success: false, error: 'Incident report not found' });
+    }
+    if (status) report.status = status;
+    if (notes !== undefined) report.notes = notes;
+    broadcastRealtime({
+      type: 'INCIDENT_REPORT_UPDATED',
+      report,
+      timestamp: new Date().toISOString()
+    });
+    res.json({ success: true, report });
+  });
+
+  // 24.54 DELETE /api/ai/health/incident-reports/:id - Delete Specific Incident Report
+  app.delete('/api/ai/health/incident-reports/:id', (req, res) => {
+    const { id } = req.params;
+    const idx = apiHealthIncidentReports.findIndex(r => r.id === id);
+    if (idx !== -1) {
+      apiHealthIncidentReports.splice(idx, 1);
+    }
+    res.json({ success: true, message: `Incident report ${id} deleted` });
+  });
+
+  // 24.55 DELETE /api/ai/health/incident-reports - Clear All Incident Reports
+  app.delete('/api/ai/health/incident-reports', (req, res) => {
+    apiHealthIncidentReports.length = 0;
+    res.json({ success: true, message: 'All incident reports cleared' });
+  });
+
+  // 24.6 POST /api/ai/quota/reset - Reset Quota Lockout State
   app.post('/api/ai/quota/reset', (req, res) => {
     resetQuotaState();
     res.json({
@@ -3685,6 +4586,283 @@ Ensure priority is strictly "P0", "P1", or "P2". Return ONLY valid JSON with no 
       message: 'Gemini quota lockout counter reset. Live calls will proceed immediately.',
       quotaStatus: getQuotaStatus()
     });
+  });
+
+  // =========================================================================
+  // 24.31 GEMINI API KEY ZERO-DOWNTIME ROTATION ENDPOINTS
+  // =========================================================================
+
+  // GET /api/ai/key/rotation-status - Current Key Status & Grace Period Countdown
+  app.get('/api/ai/key/rotation-status', (req, res) => {
+    const status = getKeyRotationStatus();
+    res.json({ success: true, status });
+  });
+
+  // POST /api/ai/key/rotate - Initiate Zero-Downtime Key Cycle with Grace Period Countdown
+  app.post('/api/ai/key/rotate', async (req, res) => {
+    const { newKey, gracePeriodSeconds = 45, initiatedBy = 'Security Admin' } = req.body;
+    try {
+      const result = await initiateKeyRotation(newKey, Number(gracePeriodSeconds) || 45, initiatedBy);
+      db.addAuditLog({
+        artifactId: 'gemini_api_key_lifecycle',
+        taskType: 'PRD',
+        action: result.success ? 'MODIFIED' : 'REJECTED',
+        userId: initiatedBy,
+        details: result.success
+          ? `Initiated zero-downtime Gemini API key rotation (${gracePeriodSeconds}s grace period). Pre-flight probe verified in ${result.verifiedLatencyMs}ms.`
+          : `Gemini API key rotation pre-flight probe rejected: ${result.message}`
+      });
+      res.status(result.success ? 200 : 400).json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || 'Key rotation failed' });
+    }
+  });
+
+  // POST /api/ai/key/rotate/confirm - Force Early Decommission of Old Key
+  app.post('/api/ai/key/rotate/confirm', (req, res) => {
+    const { initiatedBy = 'Security Admin' } = req.body;
+    const status = completeKeyRotation(true, initiatedBy);
+    db.addAuditLog({
+      artifactId: 'gemini_api_key_lifecycle',
+      taskType: 'PRD',
+      action: 'APPROVED',
+      userId: initiatedBy,
+      details: 'Confirmed Gemini API key rotation. Previous key decommissioned with zero downtime.'
+    });
+    res.json({ success: true, status });
+  });
+
+  // POST /api/ai/key/rotate/cancel - Abort Rotation & Roll Back to Previous Primary Key
+  app.post('/api/ai/key/rotate/cancel', (req, res) => {
+    const { initiatedBy = 'Security Admin' } = req.body;
+    const status = cancelKeyRotation(initiatedBy);
+    db.addAuditLog({
+      artifactId: 'gemini_api_key_lifecycle',
+      taskType: 'PRD',
+      action: 'REVERTED',
+      userId: initiatedBy,
+      details: 'Aborted Gemini API key rotation. Safely rolled back to previous primary key.'
+    });
+    res.json({ success: true, status });
+  });
+
+  // POST /api/ai/key/update - Instant Hot-Swap API Key Update with Pre-Flight Verification
+  app.post('/api/ai/key/update', async (req, res) => {
+    const { newKey, initiatedBy = 'Settings Admin' } = req.body;
+    if (!newKey) {
+      return res.status(400).json({ success: false, message: 'New API key is required.' });
+    }
+    const result = await instantUpdateApiKey(newKey, initiatedBy);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    db.addAuditLog({
+      artifactId: 'gemini_api_key_lifecycle',
+      taskType: 'PRD',
+      action: 'UPDATED',
+      userId: initiatedBy,
+      details: `Gemini API Key updated instantly and verified (roundtrip ${result.verifiedLatencyMs}ms).`
+    });
+    res.json(result);
+  });
+
+  // POST /api/ai/health/alert - Record and Broadcast API Error Rate Alert Event
+  app.post('/api/ai/health/alert', (req, res) => {
+    const { errorRate, threshold, serviceName, details } = req.body;
+    const alertPayload = {
+      id: `alert_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      errorRate: Number(errorRate) || 0,
+      threshold: Number(threshold) || 5,
+      serviceName: serviceName || 'Gateway Services',
+      details: details || `API Error rate ${errorRate}% exceeded configured threshold ${threshold}%`,
+      severity: Number(errorRate) > (Number(threshold) * 1.5) ? 'critical' : 'warning'
+    };
+
+    db.addAuditLog({
+      artifactId: 'api_health_sentinel',
+      taskType: 'PRD',
+      action: 'DISPATCHED',
+      userId: 'Health Sentinel',
+      details: `Push Alert Sent: Error rate ${alertPayload.errorRate}% breached threshold ${alertPayload.threshold}% (${alertPayload.serviceName})`
+    });
+
+    broadcastRealtime({
+      type: 'API_ALERT_TRIGGERED',
+      alert: alertPayload,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ success: true, alert: alertPayload });
+  });
+
+  // POST /api/ai/health/simulate-error-burst - Intentionally Burst Errors to Test Push Notifications
+  app.post('/api/ai/health/simulate-error-burst', (req, res) => {
+    const { errorCount = 12, targetRate = 22 } = req.body;
+    const endpoints = ['/api/generate', '/api/ai/chat', '/api/products/solve-issue', '/api/sprint'];
+    
+    // Inject errors into endpoints to push error rate high
+    for (let i = 0; i < errorCount; i++) {
+      const ep = endpoints[i % endpoints.length];
+      const status = 500;
+      const latency = Math.round(180 + Math.random() * 220);
+      recordEndpointMetrics(ep, status, latency);
+    }
+
+    const updated = getEndpointDistributionList();
+    broadcastRealtime({
+      type: 'ENDPOINT_DISTRIBUTION_UPDATED',
+      endpointDistribution: updated,
+      timestamp: new Date().toISOString()
+    });
+
+    const totalRequests = updated.reduce((s, e) => s + e.totalRequests, 0);
+    const totalErrors = updated.reduce((s, e) => s + e.errorCount, 0);
+    const calculatedErrorRate = totalRequests > 0 ? Number(((totalErrors / totalRequests) * 100).toFixed(1)) : targetRate;
+
+    const alertPayload = {
+      id: `alert_burst_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      errorRate: calculatedErrorRate,
+      threshold: 5,
+      serviceName: 'Simulated Chaos Influx',
+      details: `Synthetic traffic error burst triggered! Error rate jumped to ${calculatedErrorRate}%.`,
+      severity: calculatedErrorRate > 10 ? 'critical' : 'warning'
+    };
+
+    broadcastRealtime({
+      type: 'API_ALERT_TRIGGERED',
+      alert: alertPayload,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      message: `Simulated error burst injected (${errorCount} errors). Current error rate: ${calculatedErrorRate}%`,
+      errorRate: calculatedErrorRate,
+      alert: alertPayload,
+      endpointDistribution: updated
+    });
+  });
+
+  // POST /api/ai/health/simulate-traffic - Send Simulated Request Pulses to Endpoints
+  app.post('/api/ai/health/simulate-traffic', (req, res) => {
+    const { endpoint = '/api/generate', count = 10, errorRatio = 0 } = req.body;
+    const targetEndpoint = endpointDistributionStore[endpoint] ? endpoint : '/api/generate';
+    for (let i = 0; i < count; i++) {
+      const isErr = Math.random() < errorRatio;
+      const status = isErr ? 500 : 200;
+      const latency = Math.round(50 + Math.random() * 150);
+      recordEndpointMetrics(targetEndpoint, status, latency);
+    }
+    const updated = getEndpointDistributionList();
+    broadcastRealtime({
+      type: 'ENDPOINT_DISTRIBUTION_UPDATED',
+      endpointDistribution: updated,
+      timestamp: new Date().toISOString()
+    });
+    res.json({
+      success: true,
+      message: `Simulated ${count} requests to ${targetEndpoint}`,
+      endpointDistribution: updated
+    });
+  });
+
+  // POST /api/ai/health/simulate-endpoint-5xx - Injects 5xx errors on a specific endpoint within the 1-minute window
+  app.post('/api/ai/health/simulate-endpoint-5xx', (req, res) => {
+    const {
+      endpoint = '/api/generate',
+      totalRequests = 10,
+      error5xxCount = 2,
+      statusCode = 503
+    } = req.body;
+
+    const targetKey = endpointDistributionStore[endpoint] ? endpoint : '/api/generate';
+
+    for (let i = 0; i < totalRequests; i++) {
+      const isErr = i < error5xxCount;
+      const status = isErr ? statusCode : 200;
+      const latency = Math.round(140 + Math.random() * 200);
+      recordEndpointMetrics(targetKey, status, latency);
+    }
+
+    const updatedList = getEndpointDistributionList();
+    const updatedItem = updatedList.find(e => e.endpoint === targetKey);
+
+    const rate = updatedItem ? updatedItem.oneMinute5xxErrorRate : 0;
+    const isBreached = rate > 5.0;
+
+    const alertPayload = {
+      id: `alert_5xx_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      endpoint: targetKey,
+      serviceName: endpointDistributionStore[targetKey]?.serviceName || 'Microservice',
+      errorRate5xx: rate,
+      threshold: 5.0,
+      windowDurationSeconds: 60,
+      error5xxCount: updatedItem?.oneMinute5xxCount || error5xxCount,
+      totalRequestsInWindow: updatedItem?.oneMinuteTotalRequests || totalRequests,
+      severity: rate > 15 ? 'critical' : 'warning',
+      details: `5xx Error rate on ${targetKey} reached ${rate}% over the 1-minute window, exceeding the 5.0% threshold.`
+    };
+
+    if (isBreached) {
+      db.addAuditLog({
+        artifactId: 'endpoint_5xx_sentinel',
+        taskType: 'PRD',
+        action: 'DISPATCHED',
+        userId: '5xx Health Sentinel',
+        details: `Automated 5xx Alert: ${targetKey} reported ${rate}% 5xx error rate in 1-min window (threshold: 5%).`
+      });
+
+      broadcastRealtime({
+        type: 'ENDPOINT_5XX_ALERT_TRIGGERED',
+        alert: alertPayload,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    broadcastRealtime({
+      type: 'ENDPOINT_DISTRIBUTION_UPDATED',
+      endpointDistribution: updatedList,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      isBreached,
+      alert: isBreached ? alertPayload : null,
+      endpoint: updatedItem,
+      endpointDistribution: updatedList
+    });
+  });
+
+  // POST /api/ai/health/reset-endpoint-5xx - Clears 5xx error samples for an endpoint or all endpoints
+  app.post('/api/ai/health/reset-endpoint-5xx', (req, res) => {
+    const { endpoint } = req.body;
+    const now = Date.now();
+    if (endpoint && endpointRollingSamples[endpoint]) {
+      endpointRollingSamples[endpoint] = [
+        { timestamp: now - 10000, statusCode: 200, latencyMs: 30, is5xx: false },
+        { timestamp: now - 5000, statusCode: 200, latencyMs: 25, is5xx: false }
+      ];
+    } else {
+      Object.keys(endpointRollingSamples).forEach(key => {
+        endpointRollingSamples[key] = [
+          { timestamp: now - 10000, statusCode: 200, latencyMs: 30, is5xx: false },
+          { timestamp: now - 5000, statusCode: 200, latencyMs: 25, is5xx: false }
+        ];
+      });
+    }
+
+    const updatedList = getEndpointDistributionList();
+    broadcastRealtime({
+      type: 'ENDPOINT_DISTRIBUTION_UPDATED',
+      endpointDistribution: updatedList,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ success: true, endpointDistribution: updatedList });
   });
 
   // 24.4 POST /api/sandbox/artifacts/test-solve - Real-Time Problem Solving Test Lab across 19 Artifacts
@@ -4571,6 +5749,29 @@ Ensure priority is strictly "P0", "P1", or "P2". Return ONLY valid JSON with no 
             mode: newMode,
             timestamp: new Date().toISOString()
           });
+        } else if (msg.type === 'GET_KEY_ROTATION_STATUS') {
+          clientWs.send(JSON.stringify({
+            type: 'KEY_ROTATION_STATUS',
+            status: getKeyRotationStatus()
+          }));
+        } else if (msg.type === 'INITIATE_KEY_ROTATION') {
+          const rotRes = await initiateKeyRotation(msg.newKey, msg.gracePeriodSeconds, msg.initiatedBy);
+          clientWs.send(JSON.stringify({
+            type: 'KEY_ROTATION_RESPONSE',
+            result: rotRes
+          }));
+        } else if (msg.type === 'CONFIRM_KEY_ROTATION') {
+          const finalStatus = completeKeyRotation(true, msg.initiatedBy);
+          clientWs.send(JSON.stringify({
+            type: 'KEY_ROTATION_COMPLETED',
+            status: finalStatus
+          }));
+        } else if (msg.type === 'CANCEL_KEY_ROTATION') {
+          const cancelledStatus = cancelKeyRotation(msg.initiatedBy);
+          clientWs.send(JSON.stringify({
+            type: 'KEY_ROTATION_CANCELLED',
+            status: cancelledStatus
+          }));
         }
       } catch (e) {
         console.warn('[Realtime WS parse error]', e);

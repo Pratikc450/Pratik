@@ -71,15 +71,29 @@ export const BulkStoriesUpdateSchema = z.object({
   storyIds: z.array(z.string()).optional(),
   status: z.string().optional(),
   priority: z.string().optional(),
+  sprint: z.string().optional(),
+  sprintId: z.string().optional(),
   action: z.string().optional(),
   isApprovalGate: z.boolean().optional(),
   userId: z.string().optional(),
+  riceUpdates: z.object({
+    reach: z.coerce.number().optional(),
+    impact: z.coerce.number().optional(),
+    confidence: z.coerce.number().optional(),
+    effort: z.coerce.number().optional(),
+    riceScore: z.coerce.number().optional()
+  }).optional(),
   updates: z.array(z.object({
     id: z.string().min(1, 'Story id is required in updates list'),
     confidence: z.coerce.number().optional(),
     riceScore: z.coerce.number().optional(),
+    reach: z.coerce.number().optional(),
+    impact: z.coerce.number().optional(),
+    effort: z.coerce.number().optional(),
     priority: z.string().optional(),
-    status: z.string().optional()
+    status: z.string().optional(),
+    sprint: z.string().optional(),
+    sprintId: z.string().optional()
   })).optional()
 }).refine(data => (Array.isArray(data.storyIds) && data.storyIds.length > 0) || (Array.isArray(data.updates) && data.updates.length > 0), {
   message: 'storyIds array or updates array is required'

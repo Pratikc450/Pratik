@@ -19,7 +19,19 @@ import {
   AlertTriangle,
   Bug,
   Terminal,
-  FileCode
+  FileCode,
+  DollarSign,
+  Radio,
+  Download,
+  Flame,
+  Calendar,
+  ChevronDown,
+  ChevronUp,
+  SlidersHorizontal,
+  Wifi,
+  AlertCircle,
+  ArrowUpRight,
+  BarChart3
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -34,6 +46,8 @@ import {
   Legend,
   ReferenceLine
 } from 'recharts';
+import { realtimeWs } from '../services/websocketClient.js';
+import { exportToJson } from '../utils/exportUtils.js';
 
 const TIME_SERIES_INITIATIVES = [
   {
@@ -187,6 +201,146 @@ export const TelemetryDashboard: React.FC = () => {
     fetchData();
   }, []);
 
+  // 30-Day Predictive Token Forecast State (§6)
+  const [growthRate, setGrowthRate] = useState<number>(0.08); // 8% weekly compounding
+  const [modelTier, setModelTier] = useState<'flash' | 'pro'>('flash');
+  const [forecastScenario, setForecastScenario] = useState<'baseline' | 'caching' | 'repair'>('baseline');
+  const [customBudgetLimit, setCustomBudgetLimit] = useState<number>(50000);
+  const [forecastData, setForecastData] = useState<any>(null);
+  const [isFetchingForecast, setIsFetchingForecast] = useState(false);
+  const [isSimulatingTokenTick, setIsSimulatingTokenTick] = useState(false);
+  const [wsPulseEffect, setWsPulseEffect] = useState(false);
+  const [showMilestonesTable, setShowMilestonesTable] = useState(false);
+  const [lastWsTokenEvent, setLastWsTokenEvent] = useState<any>(null);
+  const [wsConnected, setWsConnected] = useState(true);
+
+  const fetchForecast = async () => {
+    setIsFetchingForecast(true);
+    try {
+      const url = `/api/telemetry/forecast?growthRate=${growthRate}&modelTier=${modelTier}&scenario=${forecastScenario}&customLimit=${customBudgetLimit}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setForecastData(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch token forecast', err);
+    } finally {
+      setIsFetchingForecast(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchForecast();
+  }, [growthRate, modelTier, forecastScenario, customBudgetLimit, telemetry?.tokenBudgetUsed]);
+
+  // Subscribe to real-time WebSocket events
+  useEffect(() => {
+    const unsubMetrics = realtimeWs.subscribeMetrics((metrics) => {
+      setWsConnected(metrics.status === 'connected');
+    });
+
+    const unsubToken = realtimeWs.subscribe('TOKEN_CONSUMPTION_EVENT', (data) => {
+      setLastWsTokenEvent(data);
+      setWsPulseEffect(true);
+      setTimeout(() => setWsPulseEffect(false), 2200);
+      setTelemetry((prev) => prev ? { ...prev, tokenBudgetUsed: data.totalUsed, tokenBudgetLimit: data.budgetLimit } : null);
+    });
+
+    const unsubTel = realtimeWs.subscribe('TELEMETRY_UPDATED', (data) => {
+      setTelemetry((prev) => prev ? { ...prev, tokenBudgetUsed: data.tokenBudgetUsed, tokenBudgetLimit: data.tokenBudgetLimit } : null);
+    });
+
+    const unsubBudget = realtimeWs.subscribe('BUDGET_CONFIG_UPDATED', (data) => {
+      setCustomBudgetLimit(data.budgetLimit);
+      setTelemetry((prev) => prev ? { ...prev, tokenBudgetLimit: data.budgetLimit } : null);
+    });
+
+    return () => {
+      unsubMetrics();
+      unsubToken();
+      unsubTel();
+      unsubBudget();
+    };
+  }, []);
+
+  const handleSimulateTokenTick = async (amount: number = 850) => {
+    setIsSimulatingTokenTick(true);
+    try {
+      const res = await fetch('/api/telemetry/simulate-token-tick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount, reason: 'Interactive PRD Generation' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setWsPulseEffect(true);
+        setTimeout(() => setWsPulseEffect(false), 2200);
+      }
+    } catch (err) {
+      console.error('Failed to simulate token tick', err);
+    } finally {
+      setIsSimulatingTokenTick(false);
+    }
+  };
+
+  const handleUpdateBudgetLimit = async (limit: number) => {
+    setCustomBudgetLimit(limit);
+    try {
+      await fetch('/api/telemetry/budget-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit })
+      });
+    } catch (err) {
+      console.error('Failed to update budget limit', err);
+    }
+  };
+
+  const handleExportForecast = (format: 'json' | 'csv') => {
+    if (!forecastData?.dataPoints) return;
+    if (format === 'json') {
+      exportToJson(`30_day_api_token_budget_forecast.json`, {
+        exportedAt: new Date().toISOString(),
+        summary: {
+          currentUsage: forecastData.currentUsed,
+          budgetCap: forecastData.budgetLimit,
+          projectedTotalTokens: forecastData.projectedTotalTokens,
+          estimatedCostUsd: forecastData.finalCostUsd,
+          growthRatePct: Math.round(forecastData.growthRate * 100),
+          modelTier: forecastData.modelTier,
+          scenario: forecastData.scenario,
+          breachDay: forecastData.breachDay,
+          breachDateLabel: forecastData.breachDateLabel
+        },
+        forecastDailyPoints: forecastData.dataPoints
+      });
+    } else {
+      const headers = ['Day', 'Date', 'Daily_Burn_Tokens', 'Projected_Cumulative_Tokens', 'Lower_Bound_95CI', 'Upper_Bound_95CI', 'Budget_Cap', 'Estimated_Cost_USD', 'Is_Breached'];
+      const rows = forecastData.dataPoints.map((p: any) => [
+        p.day,
+        p.date,
+        p.dailyBurn,
+        p.projectedCumulative,
+        p.lowerBound,
+        p.upperBound,
+        p.budgetCap,
+        p.estimatedCostUsd,
+        p.isBreached ? 'YES' : 'NO'
+      ]);
+      const csvContent = [headers.join(','), ...rows.map((r: any) => r.join(','))].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `30_day_api_token_budget_forecast.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  };
+
   const handleResetBudget = async () => {
     try {
       const res = await fetch('/api/budget/reset', { method: 'POST' });
@@ -284,6 +438,515 @@ export const TelemetryDashboard: React.FC = () => {
             >
               Reset
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2a. PREDICTIVE 30-DAY API TOKEN USAGE & BUDGET OBSERVABILITY (§6 & Acceptance Test 7) */}
+      <div className={`bg-slate-900 border rounded-xl p-5 shadow-sm space-y-5 transition-all duration-300 ${
+        wsPulseEffect ? 'border-purple-500 shadow-purple-500/20 ring-1 ring-purple-500/50' : 'border-slate-800'
+      }`}>
+        {/* Section Header */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div className="flex items-start space-x-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+              wsPulseEffect ? 'bg-purple-500/30 text-purple-300 border border-purple-400' : 'bg-purple-500/10 text-purple-400 border border-purple-500/30'
+            }`}>
+              <Flame className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-100 flex items-center space-x-2">
+                  <span>Predictive 30-Day API Token Usage & Budget Forecast</span>
+                </h3>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
+                  30-Day Projections
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-1">
+                  <span className={`w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                  <span>WebSocket Live Synced</span>
+                </span>
+                {forecastData?.breachDay && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold animate-pulse flex items-center space-x-1">
+                    <AlertCircle className="w-3 h-3 text-rose-400" />
+                    <span>Projected Breach: Day {forecastData.breachDay}</span>
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Forecasting model calculating daily compounding token burn, 95% confidence bounds, and projected financial spend based on current Gemini 2.5 generation growth.
+              </p>
+            </div>
+          </div>
+
+          {/* Quick Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => handleSimulateTokenTick(850)}
+              disabled={isSimulatingTokenTick}
+              title="Send a real-time token consumption pulse over WebSocket to demonstrate live forecast reactivity"
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-500 text-white shadow-sm transition-all flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <Zap className={`w-3.5 h-3.5 ${isSimulatingTokenTick ? 'animate-spin' : ''}`} />
+              <span>{isSimulatingTokenTick ? 'Simulating Influx...' : 'Simulate Live Token Pulse (WS)'}</span>
+            </button>
+
+            <button
+              onClick={() => handleExportForecast('json')}
+              title="Download full 30-day forecast projection table as JSON"
+              className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex items-center space-x-1 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Export JSON</span>
+            </button>
+
+            <button
+              onClick={() => handleExportForecast('csv')}
+              title="Download full 30-day forecast projection table as CSV"
+              className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex items-center space-x-1 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5 text-blue-400" />
+              <span>Export CSV</span>
+            </button>
+          </div>
+        </div>
+
+        {/* WebSocket Real-Time Alert Banner if Token Influx Occurred */}
+        {lastWsTokenEvent && (
+          <div className="p-3 bg-purple-950/40 border border-purple-800/60 rounded-lg flex items-center justify-between text-xs text-purple-200 animate-fadeIn">
+            <div className="flex items-center space-x-2">
+              <Radio className="w-4 h-4 text-purple-400 animate-pulse" />
+              <span>
+                <strong>Live WebSocket Influx:</strong> +{lastWsTokenEvent.consumedTokens?.toLocaleString()} tokens consumed for &quot;{lastWsTokenEvent.reason}&quot;. Forecast updated dynamically across all clients.
+              </span>
+            </div>
+            <span className="text-[10px] font-mono text-purple-400">
+              {new Date(lastWsTokenEvent.timestamp).toLocaleTimeString()}
+            </span>
+          </div>
+        )}
+
+        {/* 4 Forecast KPI Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {/* Card 1: Projected 30-Day Token Burn */}
+          <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+            <div className="flex items-center justify-between text-slate-400 text-xs">
+              <span className="uppercase font-bold text-[10px] tracking-wider">Projected 30-Day Total</span>
+              <Cpu className="w-4 h-4 text-purple-400" />
+            </div>
+            <div className="text-xl font-bold font-mono text-purple-300 mt-1">
+              {forecastData?.projectedTotalTokens?.toLocaleString() || '---'}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1">
+              +{forecastData?.totalNewTokensProjected?.toLocaleString() || 0} tokens ({forecastData?.budgetUtilizationPct || 0}% cap)
+            </div>
+          </div>
+
+          {/* Card 2: Projected Budget Runout / Exhaustion Date */}
+          <div className={`p-3.5 bg-slate-950 rounded-xl border ${
+            forecastData?.breachDay 
+              ? forecastData.breachDay < 20 
+                ? 'border-rose-900/80 bg-rose-950/20' 
+                : 'border-amber-900/80 bg-amber-950/20' 
+              : 'border-slate-800'
+          }`}>
+            <div className="flex items-center justify-between text-slate-400 text-xs">
+              <span className="uppercase font-bold text-[10px] tracking-wider">Runway Exhaustion</span>
+              <Calendar className="w-4 h-4 text-amber-400" />
+            </div>
+            <div className={`text-xl font-bold font-mono mt-1 ${
+              forecastData?.breachDay 
+                ? forecastData.breachDay < 20 ? 'text-rose-400' : 'text-amber-400'
+                : 'text-emerald-400'
+            }`}>
+              {forecastData?.breachDay ? `Day ${forecastData.breachDay} (${forecastData.breachDateLabel})` : 'Safe (30+ Days)'}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1">
+              {forecastData?.breachDay 
+                ? `Cap ${forecastData.budgetLimit.toLocaleString()} breached early` 
+                : `Zero runway breach projected`}
+            </div>
+          </div>
+
+          {/* Card 3: Estimated 30-Day Cloud Spend */}
+          <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+            <div className="flex items-center justify-between text-slate-400 text-xs">
+              <span className="uppercase font-bold text-[10px] tracking-wider">Estimated Spend (USD)</span>
+              <DollarSign className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div className="text-xl font-bold font-mono text-emerald-300 mt-1">
+              ${forecastData?.finalCostUsd?.toFixed(2) || '0.00'}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1">
+              Gemini {modelTier === 'pro' ? '2.5 Pro ($2.50/M)' : '2.5 Flash ($0.15/M)'}
+            </div>
+          </div>
+
+          {/* Card 4: Daily Burn Velocity */}
+          <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+            <div className="flex items-center justify-between text-slate-400 text-xs">
+              <span className="uppercase font-bold text-[10px] tracking-wider">Daily Burn Velocity</span>
+              <Flame className="w-4 h-4 text-cyan-400" />
+            </div>
+            <div className="text-xl font-bold font-mono text-cyan-300 mt-1">
+              ~{forecastData?.dailyRunRate?.toLocaleString() || 1250} / day
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1">
+              {Math.round(growthRate * 100)}% weekly compound pace
+            </div>
+          </div>
+        </div>
+
+        {/* Interactive Controls Bar for PMs */}
+        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center space-x-2 text-slate-300 font-semibold">
+              <SlidersHorizontal className="w-4 h-4 text-purple-400" />
+              <span>Predictive Modeling & Budget What-If Controls</span>
+            </div>
+            <span className="text-[11px] text-slate-400">
+              Fine-tune growth rates, efficiency architectures, and model pricing tiers
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            {/* Control 1: Weekly Growth Rate */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center text-slate-400">
+                <span className="font-medium">Weekly Growth Pace:</span>
+                <span className="font-mono font-bold text-purple-300">+{Math.round(growthRate * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="-0.10"
+                max="0.40"
+                step="0.02"
+                value={growthRate}
+                onChange={(e) => setGrowthRate(parseFloat(e.target.value))}
+                className="w-full accent-purple-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+              />
+              <div className="flex justify-between text-[10px] text-slate-400">
+                <button onClick={() => setGrowthRate(0)} className="hover:text-slate-200">Linear (0%)</button>
+                <button onClick={() => setGrowthRate(0.08)} className="hover:text-purple-300 font-semibold">Normal (8%)</button>
+                <button onClick={() => setGrowthRate(0.20)} className="hover:text-purple-300">Sprint Surge (20%)</button>
+                <button onClick={() => setGrowthRate(0.35)} className="hover:text-rose-400">Hypergrowth (35%)</button>
+              </div>
+            </div>
+
+            {/* Control 2: Architectural Optimization Scenarios */}
+            <div className="space-y-1.5">
+              <span className="text-slate-400 font-medium block">Architectural Efficiency Scenario:</span>
+              <div className="grid grid-cols-3 gap-1">
+                <button
+                  onClick={() => setForecastScenario('baseline')}
+                  className={`px-2 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                    forecastScenario === 'baseline'
+                      ? 'bg-purple-600 text-white border-purple-500 shadow-xs'
+                      : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  Baseline
+                </button>
+                <button
+                  onClick={() => setForecastScenario('caching')}
+                  title="Prompt Caching eliminates redundant context tokens (-40%)"
+                  className={`px-2 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                    forecastScenario === 'caching'
+                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-xs'
+                      : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  Caching (-40%)
+                </button>
+                <button
+                  onClick={() => setForecastScenario('repair')}
+                  title="Self-Healing Zod Barrier reduces LLM re-generation retries (-22%)"
+                  className={`px-2 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                    forecastScenario === 'repair'
+                      ? 'bg-cyan-600 text-white border-cyan-500 shadow-xs'
+                      : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  Self-Healing (-22%)
+                </button>
+              </div>
+            </div>
+
+            {/* Control 3: Model Pricing & Budget Cap Adjustment */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="font-medium">Model Tier & Budget Cap:</span>
+                <span className="font-mono text-[10px] text-slate-400">{customBudgetLimit.toLocaleString()} cap</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="grid grid-cols-2 gap-1 flex-1">
+                  <button
+                    onClick={() => setModelTier('flash')}
+                    className={`px-2 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                      modelTier === 'flash'
+                        ? 'bg-purple-600 text-white border-purple-500'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    2.5 Flash
+                  </button>
+                  <button
+                    onClick={() => setModelTier('pro')}
+                    className={`px-2 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                      modelTier === 'pro'
+                        ? 'bg-indigo-600 text-white border-indigo-500'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    2.5 Pro
+                  </button>
+                </div>
+                <div className="flex items-center space-x-1">
+                  {[50000, 100000, 200000].map((cap) => (
+                    <button
+                      key={cap}
+                      onClick={() => handleUpdateBudgetLimit(cap)}
+                      className={`px-2 py-1.5 rounded-lg text-[10px] font-mono border transition-colors ${
+                        customBudgetLimit === cap
+                          ? 'bg-slate-800 text-emerald-400 border-emerald-500/50 font-bold'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      {cap / 1000}k
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 30-Day Predictive Line Chart Container */}
+        <div className="w-full h-80 pt-2">
+          {forecastData?.dataPoints ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={forecastData.dataPoints} margin={{ top: 15, right: 30, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis dataKey="date" stroke="#64748b" fontSize={11} tickLine={false} />
+                <YAxis
+                  stroke="#64748b"
+                  fontSize={11}
+                  tickLine={false}
+                  tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
+                />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const d = payload[0].payload;
+                      const headroom = d.budgetCap - d.projectedCumulative;
+                      return (
+                        <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-700 shadow-2xl text-xs space-y-1.5 font-mono min-w-[240px]">
+                          <div className="font-bold text-slate-200 font-sans border-b border-slate-800 pb-1 flex justify-between items-center">
+                            <span>Day {d.day} ({d.date})</span>
+                            <span className={d.isBreached ? 'text-rose-400 text-[10px]' : 'text-emerald-400 text-[10px]'}>
+                              {d.isBreached ? 'QUOTA BREACHED' : 'ON TRACK'}
+                            </span>
+                          </div>
+                          <div className="text-purple-300 font-bold">
+                            Projected Total: {d.projectedCumulative?.toLocaleString()} tokens
+                          </div>
+                          <div className="text-slate-400 text-[11px] flex justify-between">
+                            <span>Daily Burn:</span>
+                            <span className="text-cyan-300">+{d.dailyBurn?.toLocaleString()} tokens/day</span>
+                          </div>
+                          <div className="text-slate-400 text-[11px] flex justify-between">
+                            <span>95% CI Range:</span>
+                            <span className="text-slate-300">[{d.lowerBound?.toLocaleString()} - {d.upperBound?.toLocaleString()}]</span>
+                          </div>
+                          <div className="text-slate-400 text-[11px] flex justify-between">
+                            <span>Estimated Cost:</span>
+                            <span className="text-emerald-400 font-bold">${d.estimatedCostUsd?.toFixed(2)} USD</span>
+                          </div>
+                          <div className="text-slate-400 text-[11px] flex justify-between border-t border-slate-800/80 pt-1">
+                            <span>Budget Cap Headroom:</span>
+                            <span className={headroom >= 0 ? 'text-emerald-400' : 'text-rose-400 font-bold'}>
+                              {headroom >= 0 ? `${headroom.toLocaleString()} tokens` : `Deficit: ${Math.abs(headroom).toLocaleString()} tokens`}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+
+                {/* Org Budget Cap Reference Line */}
+                <ReferenceLine
+                  y={forecastData.budgetLimit}
+                  stroke="#ef4444"
+                  strokeDasharray="4 4"
+                  strokeWidth={2}
+                  label={{
+                    value: `Org Budget Cap (${(forecastData.budgetLimit / 1000).toFixed(0)}k)`,
+                    fill: '#f87171',
+                    fontSize: 10,
+                    position: 'insideTopRight'
+                  }}
+                />
+
+                {/* Breach Day Vertical Line */}
+                {forecastData.breachDateLabel && (
+                  <ReferenceLine
+                    x={forecastData.breachDateLabel}
+                    stroke="#fbbf24"
+                    strokeDasharray="3 3"
+                    strokeWidth={1.5}
+                    label={{
+                      value: `Runout: Day ${forecastData.breachDay}`,
+                      fill: '#fbbf24',
+                      fontSize: 10,
+                      position: 'insideTopLeft'
+                    }}
+                  />
+                )}
+
+                {/* 95% Confidence Upper Bound */}
+                <Line
+                  type="monotone"
+                  dataKey="upperBound"
+                  name="95% Upper Bound"
+                  stroke="#818cf8"
+                  strokeDasharray="3 3"
+                  strokeWidth={1.5}
+                  dot={false}
+                />
+
+                {/* Main Projected Trajectory */}
+                <Line
+                  type="monotone"
+                  dataKey="projectedCumulative"
+                  name="Projected Cumulative Usage (Tokens)"
+                  stroke="#a855f7"
+                  strokeWidth={3}
+                  dot={{ r: 3, fill: '#a855f7' }}
+                  activeDot={{ r: 6, fill: '#c084fc' }}
+                />
+
+                {/* 95% Confidence Lower Bound */}
+                <Line
+                  type="monotone"
+                  dataKey="lowerBound"
+                  name="95% Lower Bound"
+                  stroke="#06b6d4"
+                  strokeDasharray="3 3"
+                  strokeWidth={1.5}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin text-purple-400" />
+              Calculating 30-day predictive token projection model...
+            </div>
+          )}
+        </div>
+
+        {/* Milestone Milestones Table Toggle */}
+        <div className="border-t border-slate-800 pt-3">
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => setShowMilestonesTable(!showMilestonesTable)}
+              className="text-xs text-slate-400 hover:text-slate-200 flex items-center space-x-1.5 transition-colors cursor-pointer"
+            >
+              <span>{showMilestonesTable ? 'Hide 30-Day Milestone Details' : 'View 30-Day Milestones Breakdown Table'}</span>
+              {showMilestonesTable ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+            <span className="text-[11px] font-mono text-slate-500">
+              Confidence Grounding: ±14% to ±22% over 30 days
+            </span>
+          </div>
+
+          {showMilestonesTable && forecastData?.dataPoints && (
+            <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
+              <table className="w-full text-left text-xs text-slate-300 font-mono">
+                <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+                  <tr>
+                    <th className="p-2.5">Milestone</th>
+                    <th className="p-2.5">Date</th>
+                    <th className="p-2.5">Daily Burn</th>
+                    <th className="p-2.5">Projected Total</th>
+                    <th className="p-2.5">95% Range</th>
+                    <th className="p-2.5">Spend ($)</th>
+                    <th className="p-2.5">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 bg-slate-900/60">
+                  {[1, 5, 10, 15, 20, 25, 30].map((targetDay) => {
+                    const point = forecastData.dataPoints[targetDay - 1];
+                    if (!point) return null;
+                    return (
+                      <tr key={targetDay} className={point.isBreached ? 'bg-rose-950/20' : 'hover:bg-slate-800/40'}>
+                        <td className="p-2.5 font-bold text-slate-200">Day +{point.day}</td>
+                        <td className="p-2.5 text-slate-400">{point.date}</td>
+                        <td className="p-2.5 text-cyan-300">+{point.dailyBurn.toLocaleString()}</td>
+                        <td className="p-2.5 text-purple-300 font-bold">{point.projectedCumulative.toLocaleString()}</td>
+                        <td className="p-2.5 text-slate-400 text-[11px]">[{point.lowerBound.toLocaleString()} - {point.upperBound.toLocaleString()}]</td>
+                        <td className="p-2.5 text-emerald-400">${point.estimatedCostUsd.toFixed(2)}</td>
+                        <td className="p-2.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            point.isBreached
+                              ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                              : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                          }`}>
+                            {point.isBreached ? 'BREACHED' : 'OK'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* PM Budget Optimization Recommendations Panel */}
+        <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
+          <div className="flex items-center space-x-2 text-xs font-semibold text-slate-200">
+            <Sparkles className="w-4 h-4 text-purple-400" />
+            <span>Product Manager Token Budget Recommendations:</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-400">
+            <div className="p-2.5 bg-slate-900/70 rounded-lg border border-slate-800/80 space-y-1">
+              <span className="font-semibold text-slate-200 flex items-center space-x-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>Prompt Caching Architecture</span>
+              </span>
+              <p className="text-[11px]">
+                {forecastScenario === 'caching' 
+                  ? 'Active: Saving ~40% tokens on repeated domain context loads.' 
+                  : 'Turn on Prompt Caching to reduce monthly burn by up to 40% ($' + ((forecastData?.finalCostUsd || 5) * 0.4).toFixed(2) + ' savings).'}
+              </p>
+            </div>
+
+            <div className="p-2.5 bg-slate-900/70 rounded-lg border border-slate-800/80 space-y-1">
+              <span className="font-semibold text-slate-200 flex items-center space-x-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                <span>Zod Self-Healing Efficiency</span>
+              </span>
+              <p className="text-[11px]">
+                Pre-validating with strict Zod barriers avoids costly 2nd-pass LLM repair calls for ~80%+ of schema drifts.
+              </p>
+            </div>
+
+            <div className="p-2.5 bg-slate-900/70 rounded-lg border border-slate-800/80 space-y-1">
+              <span className="font-semibold text-slate-200 flex items-center space-x-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                <span>Runway Action Trigger</span>
+              </span>
+              <p className="text-[11px]">
+                {forecastData?.breachDay 
+                  ? `Warning: Quota will exhaust on Day ${forecastData.breachDay}. Increase limit to 100k or apply Prompt Caching.` 
+                  : 'Runway is healthy across the 30-day forecast horizon under current growth rates.'}
+              </p>
+            </div>
           </div>
         </div>
       </div>

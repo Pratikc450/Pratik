@@ -18,10 +18,11 @@ import {
   Sparkles,
   Share2,
   GitCompare,
-  FileDown
+  FileDown,
+  FileCode
 } from 'lucide-react';
 import { ArtifactDiffViewer } from './ArtifactDiffViewer.js';
-import { exportArtifactPdf, exportToMarkdown } from '../utils/exportUtils.js';
+import { exportArtifactPdf, exportToMarkdown, exportToJson } from '../utils/exportUtils.js';
 
 interface DocumentViewerProps {
   artifact: GeneratedArtifact;
@@ -57,6 +58,22 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   const handleDownloadPdf = () => {
     exportArtifactPdf(artifact, artifact.schemaData?.title || 'Product Specification');
+  };
+
+  const handleDownloadJson = () => {
+    const sanitizedTitle = (artifact.schemaData?.title || artifact.taskType).toLowerCase().replace(/[^a-z0-9]/g, '_');
+    exportToJson(`${sanitizedTitle}_v${artifact.version}.json`, {
+      id: artifact.id,
+      productId: artifact.productId,
+      taskType: artifact.taskType,
+      version: artifact.version,
+      status: artifact.status,
+      schemaData: artifact.schemaData,
+      renderedMarkdown: artifact.renderedMarkdown,
+      metadata: artifact.metadata,
+      consistencyIssues: artifact.consistencyIssues,
+      exportedAt: new Date().toISOString()
+    });
   };
 
   const handleDownloadMarkdown = () => {
@@ -174,6 +191,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           >
             <FileDown className="w-3.5 h-3.5 text-rose-400" />
             <span>Export PDF</span>
+          </button>
+
+          <button
+            onClick={handleDownloadJson}
+            title={isApproved ? "Download Official Approved JSON Schema Data" : "Download Draft JSON Schema Data"}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-sm"
+          >
+            <FileCode className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Export JSON</span>
           </button>
 
           <button
