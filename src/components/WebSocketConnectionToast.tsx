@@ -23,7 +23,17 @@ export const WebSocketConnectionToast: React.FC<WebSocketConnectionToastProps> =
   const [dismissedState, setDismissedState] = useState<ConnectionStatus | null>(null);
 
   const prevStatusRef = useRef<ConnectionStatus>(metrics.status);
+  const dismissedStateRef = useRef<ConnectionStatus | null>(dismissedState);
+  const isVisibleRef = useRef<boolean>(isVisible);
   const autoDismissTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    dismissedStateRef.current = dismissedState;
+  }, [dismissedState]);
+
+  useEffect(() => {
+    isVisibleRef.current = isVisible;
+  }, [isVisible]);
 
   useEffect(() => {
     const unsubscribe = realtimeWs.subscribeMetrics((newMetrics) => {
@@ -34,7 +44,7 @@ export const WebSocketConnectionToast: React.FC<WebSocketConnectionToastProps> =
       // Status transitioned to reconnecting or disconnected
       if (curr === 'reconnecting' || curr === 'disconnected') {
         // Only show if not explicitly dismissed for this exact state
-        if (dismissedState !== curr) {
+        if (dismissedStateRef.current !== curr) {
           setIsVisible(true);
           setReconnectedBanner(false);
           if (autoDismissTimerRef.current) {
@@ -43,7 +53,7 @@ export const WebSocketConnectionToast: React.FC<WebSocketConnectionToastProps> =
         }
       } else if (curr === 'connected') {
         // If we were previously reconnecting or disconnected, show reconnected success banner
-        if (prev === 'reconnecting' || prev === 'disconnected' || isVisible) {
+        if (prev === 'reconnecting' || prev === 'disconnected' || isVisibleRef.current) {
           setIsVisible(true);
           setReconnectedBanner(true);
           setIsReconnectingManual(false);
@@ -70,7 +80,7 @@ export const WebSocketConnectionToast: React.FC<WebSocketConnectionToastProps> =
         clearTimeout(autoDismissTimerRef.current);
       }
     };
-  }, [dismissedState, isVisible]);
+  }, []);
 
   const handleManualReconnect = () => {
     setIsReconnectingManual(true);

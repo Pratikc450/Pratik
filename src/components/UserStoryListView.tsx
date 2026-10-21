@@ -443,16 +443,26 @@ export const UserStoryListView: React.FC<UserStoryListViewProps> = ({
   const [commentCounts, setCommentCounts] = useState<{ total: number; open: number }>({ total: 0, open: 0 });
 
   useEffect(() => {
+    if (!selectedProductId) return;
     fetch(`/api/products/${selectedProductId}`)
-      .then(res => res.json())
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type');
+        return ct && ct.includes('application/json') ? res.json() : null;
+      })
       .then(data => {
+        if (!data) return;
         const storiesArt = (data.artifacts || []).find((a: any) => a.taskType === 'USER_STORIES');
         setStoriesArtifact(storiesArt || null);
         if (storiesArt) {
           fetch(`/api/artifacts/${storiesArt.id}/comments`)
-            .then(r => r.json())
+            .then(async (r) => {
+              if (!r.ok) return null;
+              const ct = r.headers.get('content-type');
+              return ct && ct.includes('application/json') ? r.json() : null;
+            })
             .then(cData => {
-              if (cData.success) {
+              if (cData && cData.success) {
                 setCommentCounts({ total: cData.totalCount || 0, open: cData.openCount || 0 });
               }
             })

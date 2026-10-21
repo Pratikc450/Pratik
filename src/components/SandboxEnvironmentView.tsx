@@ -43,7 +43,14 @@ import {
   Megaphone,
   ArrowRight,
   ExternalLink,
-  Code2
+  Code2,
+  GitBranch,
+  ArrowRightLeft,
+  TrendingDown,
+  TrendingUp,
+  AlertOctagon,
+  Pause,
+  Split
 } from 'lucide-react';
 import { 
   EnvironmentMode, 
@@ -55,7 +62,10 @@ import {
   SandboxTelemetryEvent,
   ArtifactType,
   ARTIFACT_19_CATALOG,
-  ArtifactCategory
+  ArtifactCategory,
+  CanaryDeploymentConfig,
+  CanaryMetricComparison,
+  CanaryRequestLog
 } from '../types.js';
 import { clientRateLimiter } from '../services/clientRateLimiter.js';
 
@@ -73,11 +83,15 @@ export const SandboxEnvironmentView: React.FC<SandboxEnvironmentViewProps> = ({
   onSetEnvironmentMode
 }) => {
   const [status, setStatus] = useState<SandboxStatus | null>(null);
-  const [activeTab, setActiveTab] = useState<'artifact-lab' | 'traffic' | 'chaos' | 'flags' | 'webhooks' | 'readiness'>('artifact-lab');
+  const [activeTab, setActiveTab] = useState<'artifact-lab' | 'canary' | 'traffic' | 'chaos' | 'flags' | 'webhooks' | 'readiness'>('artifact-lab');
   const [isLoading, setIsLoading] = useState(true);
   const [isSimulatingTraffic, setIsSimulatingTraffic] = useState(false);
   const [isPromoting, setIsPromoting] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // Canary Deployment State
+  const [isSimulatingCanary, setIsSimulatingCanary] = useState(false);
+  const [canaryRequestFilter, setCanaryRequestFilter] = useState<'all' | 'canary' | 'stable' | 'errors'>('all');
 
   // 19-Artifact Real-Time Problem Solver State
   const [selectedTaskType, setSelectedTaskType] = useState<ArtifactType>('PRD');
@@ -198,6 +212,89 @@ export const SandboxEnvironmentView: React.FC<SandboxEnvironmentViewProps> = ({
       showNotification('Traffic simulation encountered an error');
       setIsSimulatingTraffic(false);
       setTrafficTimer(null);
+    }
+  };
+
+  const handleUpdateCanaryTraffic = async (pct: number) => {
+    try {
+      const res = await fetch('/api/sandbox/canary/traffic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trafficPercentage: pct })
+      });
+      if (res.ok) {
+        await fetchStatus();
+        showNotification(`Canary routing updated: ${pct}% Canary / ${100 - pct}% Stable.`);
+      }
+    } catch (e) {
+      showNotification('Failed to update canary traffic ratio');
+    }
+  };
+
+  const handleSetCanaryFault = async (fault: string) => {
+    try {
+      const res = await fetch('/api/sandbox/canary/fault', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fault })
+      });
+      if (res.ok) {
+        await fetchStatus();
+        const labels: Record<string, string> = {
+          none: 'Baseline nominal health restored',
+          latency_spike: 'Latency spike fault injected (+540ms)',
+          null_pointer_500: 'HTTP 500 panic surge injected (+5.4%)',
+          memory_leak: 'Memory leak surge injected (940MB)',
+          rate_limit: 'HTTP 429 token bucket surge injected'
+        };
+        showNotification(labels[fault] || 'Canary fault updated');
+      }
+    } catch (e) {
+      showNotification('Failed to update canary fault injection');
+    }
+  };
+
+  const handleCanaryAction = async (action: 'promote' | 'rollback' | 'pause' | 'resume') => {
+    try {
+      const res = await fetch('/api/sandbox/canary/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+      if (res.ok) {
+        await fetchStatus();
+        if (action === 'promote') {
+          showNotification('🚀 Canary release promoted to 100% production!');
+        } else if (action === 'rollback') {
+          showNotification('🛡️ Emergency rollback triggered: Traffic shifted to 100% stable!');
+        } else if (action === 'pause') {
+          showNotification('⏸️ Canary progression paused.');
+        } else if (action === 'resume') {
+          showNotification('▶️ Canary traffic progression resumed.');
+        }
+      }
+    } catch (e) {
+      showNotification(`Failed to execute canary ${action}`);
+    }
+  };
+
+  const handleSimulateCanaryBurst = async () => {
+    setIsSimulatingCanary(true);
+    try {
+      const res = await fetch('/api/sandbox/canary/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: 8 })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        await fetchStatus();
+        showNotification(`Simulated ${data.generatedCount || 8} traffic requests across canary mesh.`);
+      }
+    } catch (e) {
+      showNotification('Failed to simulate canary traffic');
+    } finally {
+      setIsSimulatingCanary(false);
     }
   };
 
@@ -585,6 +682,21 @@ export const SandboxEnvironmentView: React.FC<SandboxEnvironmentViewProps> = ({
         </button>
 
         <button
+          onClick={() => setActiveTab('canary')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-medium transition-all whitespace-nowrap cursor-pointer ${
+            activeTab === 'canary'
+              ? 'bg-amber-600/30 text-amber-200 font-bold border border-amber-500/50 shadow-md shadow-amber-950/40'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+          }`}
+        >
+          <GitBranch className="w-4 h-4 text-amber-400" />
+          <span>Canary Deployment</span>
+          <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 font-mono font-bold">
+            {status?.canaryDeployment?.trafficPercentage ?? 20}% Canary
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('traffic')}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-medium transition-all whitespace-nowrap cursor-pointer ${
             activeTab === 'traffic'
@@ -620,7 +732,7 @@ export const SandboxEnvironmentView: React.FC<SandboxEnvironmentViewProps> = ({
           }`}
         >
           <Sliders className="w-4 h-4 text-indigo-400" />
-          <span>Feature Flags & Canary</span>
+          <span>Feature Flags & Rollouts</span>
         </button>
 
         <button
@@ -987,6 +1099,659 @@ export const SandboxEnvironmentView: React.FC<SandboxEnvironmentViewProps> = ({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB: CANARY DEPLOYMENT SIMULATOR */}
+      {activeTab === 'canary' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Header Card: Canary Deployment Release Overview */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shrink-0">
+                  <GitBranch className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h3 className="text-base font-bold text-slate-100">
+                      {status?.canaryDeployment?.name || 'Canary Deployment: Autonomous PM Dual-Pass Synthesizer v2.5.0-rc2'}
+                    </h3>
+                    {/* Status Pill */}
+                    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold font-mono border flex items-center gap-1.5 ${
+                      status?.canaryDeployment?.status === 'running'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                        : status?.canaryDeployment?.status === 'paused'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                        : status?.canaryDeployment?.status === 'promoted'
+                        ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        status?.canaryDeployment?.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-current'
+                      }`} />
+                      {status?.canaryDeployment?.status?.toUpperCase() || 'RUNNING'}
+                    </span>
+                    <span className="text-[11px] font-mono text-slate-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                      Target: {status?.canaryDeployment?.targetService || 'API Gateway & Multi-Artifact Spec Pipeline'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {status?.canaryDeployment?.description || 'Gradual multi-region canary rollout featuring 38% faster p95 spec generation and sub-second Gherkin verification.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 flex-wrap shrink-0">
+                <button
+                  onClick={handleSimulateCanaryBurst}
+                  disabled={isSimulatingCanary}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-indigo-950/60 disabled:opacity-50"
+                  title="Inject 8 realistic requests across canary routing mesh"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSimulatingCanary ? 'animate-spin' : ''}`} />
+                  <span>{isSimulatingCanary ? 'Simulating Traffic...' : 'Simulate Live Burst'}</span>
+                </button>
+
+                {status?.canaryDeployment?.status === 'running' ? (
+                  <button
+                    onClick={() => handleCanaryAction('pause')}
+                    className="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Pause traffic progression"
+                  >
+                    <Pause className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Pause</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleCanaryAction('resume')}
+                    className="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Resume traffic progression"
+                  >
+                    <Play className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Resume</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => handleCanaryAction('promote')}
+                  disabled={status?.canaryDeployment?.trafficPercentage === 100}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  title="Promote canary version to 100% production traffic"
+                >
+                  <Rocket className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Promote to 100%</span>
+                </button>
+
+                <button
+                  onClick={() => handleCanaryAction('rollback')}
+                  disabled={status?.canaryDeployment?.trafficPercentage === 0}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  title="Emergency Circuit Breaker: Instantly drop canary traffic to 0%"
+                >
+                  <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Rollback (0%)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Version comparison row */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-slate-800/80">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950/70 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-3 h-3 rounded-full bg-blue-500" />
+                  <div>
+                    <div className="text-xs font-bold text-slate-200">Stable Baseline Version</div>
+                    <div className="text-[11px] font-mono text-blue-400">{status?.canaryDeployment?.stableVersion || 'v2.4.2 (Production Stable)'}</div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs font-mono font-bold text-slate-300">{100 - (status?.canaryDeployment?.trafficPercentage ?? 20)}% Traffic</div>
+                  <div className="text-[10px] text-slate-500">{status?.canaryDeployment?.stableMetrics?.rps || 68} RPS</div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950/70 border border-amber-900/30">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-3 h-3 rounded-full bg-amber-400 animate-pulse" />
+                  <div>
+                    <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                      <span>Canary Candidate Version</span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] bg-amber-500/20 text-amber-300 font-mono font-bold">Candidate</span>
+                    </div>
+                    <div className="text-[11px] font-mono text-amber-300">{status?.canaryDeployment?.canaryVersion || 'v2.5.0-rc2 (Canary Dual-Pass)'}</div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs font-mono font-bold text-amber-300">{status?.canaryDeployment?.trafficPercentage ?? 20}% Traffic</div>
+                  <div className="text-[10px] text-slate-500">{status?.canaryDeployment?.canaryMetrics?.rps || 17} RPS</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Interactive Traffic Percentage Splitter */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <Split className="w-4 h-4 text-amber-400" />
+                  <span>Traffic Split Ratio & Mesh Controller</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Drag the slider or click a preset to instantly rebalance API ingress traffic between Stable and Canary versions.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-xs font-mono bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 flex items-center gap-2">
+                  <span className="text-blue-400 font-bold">{100 - (status?.canaryDeployment?.trafficPercentage ?? 20)}% Stable</span>
+                  <span className="text-slate-600">:</span>
+                  <span className="text-amber-400 font-bold">{status?.canaryDeployment?.trafficPercentage ?? 20}% Canary</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Visual Dual-Tone Segmented Progress Bar */}
+            <div className="space-y-1.5">
+              <div className="h-6 w-full rounded-xl overflow-hidden flex bg-slate-950 border border-slate-800 p-0.5">
+                <div
+                  style={{ width: `${100 - (status?.canaryDeployment?.trafficPercentage ?? 20)}%` }}
+                  className="bg-gradient-to-r from-blue-700 to-indigo-600 h-full rounded-l-lg transition-all duration-300 flex items-center justify-center text-[10px] font-mono font-bold text-white px-2 truncate shadow-inner"
+                >
+                  {(100 - (status?.canaryDeployment?.trafficPercentage ?? 20)) > 12 && (
+                    <span>Stable: {100 - (status?.canaryDeployment?.trafficPercentage ?? 20)}%</span>
+                  )}
+                </div>
+                <div
+                  style={{ width: `${status?.canaryDeployment?.trafficPercentage ?? 20}%` }}
+                  className="bg-gradient-to-r from-amber-500 to-amber-600 h-full rounded-r-lg transition-all duration-300 flex items-center justify-center text-[10px] font-mono font-bold text-slate-950 px-2 truncate shadow-inner"
+                >
+                  {(status?.canaryDeployment?.trafficPercentage ?? 20) > 12 && (
+                    <span>Canary: {status?.canaryDeployment?.trafficPercentage ?? 20}%</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+                <span>0% (100% Production Stable)</span>
+                <span>50% (Equal Split)</span>
+                <span>100% (Full Canary Rollout)</span>
+              </div>
+            </div>
+
+            {/* Slider Control */}
+            <div className="pt-2">
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={status?.canaryDeployment?.trafficPercentage ?? 20}
+                onChange={(e) => handleUpdateCanaryTraffic(Number(e.target.value))}
+                className="w-full accent-amber-500 bg-slate-800 cursor-pointer h-2.5 rounded-lg"
+              />
+            </div>
+
+            {/* Preset Split Buttons */}
+            <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-slate-800/80">
+              <span className="text-xs text-slate-400 font-medium mr-1">Quick Presets:</span>
+              {[
+                { label: '0% (Stable Only)', pct: 0 },
+                { label: '10% (Canary Pilot)', pct: 10 },
+                { label: '25% (Early Adopter)', pct: 25 },
+                { label: '50% (Dual Split)', pct: 50 },
+                { label: '75% (Staged Rollout)', pct: 75 },
+                { label: '100% (Full Release)', pct: 100 }
+              ].map((preset) => {
+                const isActive = (status?.canaryDeployment?.trafficPercentage ?? 20) === preset.pct;
+                return (
+                  <button
+                    key={preset.pct}
+                    onClick={() => handleUpdateCanaryTraffic(preset.pct)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-mono transition-all cursor-pointer border ${
+                      isActive
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 font-bold shadow-sm'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200 hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <span>{preset.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Section 3: Visual Impact on API Health Metrics (Side-by-Side Comparison) */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-emerald-400" />
+                  <span>Real-Time API Health Metrics Impact Visualizer</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Side-by-side comparative telemetry comparing latency, error rates, throughput, and resource consumption.
+                </p>
+              </div>
+
+              {/* Threshold alerts indicator */}
+              <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
+                <span>Auto-Rollback Thresholds: Latency &gt; 450ms · Error &gt; 2.0%</span>
+              </div>
+            </div>
+
+            {(() => {
+              const stable = status?.canaryDeployment?.stableMetrics || {
+                version: 'v2.4.2 (Stable)',
+                trafficPercentage: 80,
+                rps: 68,
+                p95LatencyMs: 94,
+                p99LatencyMs: 165,
+                errorRate: 0.12,
+                cpuUsagePercent: 34,
+                memoryUsageMb: 412,
+                statusCodes: { status2xx: 14280, status4xx: 24, status5xx: 3 }
+              };
+              const canary = status?.canaryDeployment?.canaryMetrics || {
+                version: 'v2.5.0-rc2 (Canary)',
+                trafficPercentage: 20,
+                rps: 17,
+                p95LatencyMs: 58,
+                p99LatencyMs: 98,
+                errorRate: 0.06,
+                cpuUsagePercent: 22,
+                memoryUsageMb: 368,
+                statusCodes: { status2xx: 3570, status4xx: 6, status5xx: 0 }
+              };
+
+              const latDelta = stable.p95LatencyMs > 0
+                ? ((canary.p95LatencyMs - stable.p95LatencyMs) / stable.p95LatencyMs) * 100
+                : 0;
+              const errDelta = canary.errorRate - stable.errorRate;
+
+              const isLatencySpike = canary.p95LatencyMs >= 450;
+              const isErrorSpike = canary.errorRate >= 2.0;
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Card 1: Throughput (RPS) */}
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-medium">Throughput & RPS</span>
+                      <Gauge className="w-4 h-4 text-blue-400" />
+                    </div>
+
+                    <div className="flex items-baseline justify-between">
+                      <div className="text-2xl font-bold font-mono text-slate-100">
+                        {(stable.rps + canary.rps)} <span className="text-xs text-slate-400 font-normal">total RPS</span>
+                      </div>
+                      <span className="text-xs font-mono text-slate-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                        {canary.rps} RPS Canary
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex justify-between text-[11px] font-mono">
+                        <span className="text-blue-400">Stable: {stable.rps} RPS ({stable.trafficPercentage}%)</span>
+                        <span className="text-amber-400">Canary: {canary.rps} RPS ({canary.trafficPercentage}%)</span>
+                      </div>
+                      <div className="h-2 rounded-full overflow-hidden flex bg-slate-950">
+                        <div style={{ width: `${stable.trafficPercentage}%` }} className="bg-blue-500 h-full" />
+                        <div style={{ width: `${canary.trafficPercentage}%` }} className="bg-amber-400 h-full" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 2: P95 & P99 Latency */}
+                  <div className={`rounded-2xl border p-4 space-y-3 ${
+                    isLatencySpike
+                      ? 'border-rose-500/50 bg-rose-950/20'
+                      : 'border-slate-800 bg-slate-900/60'
+                  }`}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-medium">P95 Spec Gen Latency</span>
+                      {latDelta <= 0 ? (
+                        <span className="flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40">
+                          <TrendingDown className="w-3 h-3" />
+                          {Math.abs(Math.round(latDelta))}% Faster
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-[11px] font-mono font-bold text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800/40">
+                          <TrendingUp className="w-3 h-3" />
+                          +{Math.round(latDelta)}% Slower
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <div className="text-[10px] text-slate-400 font-medium">Stable P95</div>
+                        <div className="text-lg font-mono font-bold text-blue-400">{stable.p95LatencyMs}ms</div>
+                        <div className="text-[10px] text-slate-500 font-mono">P99: {stable.p99LatencyMs}ms</div>
+                      </div>
+
+                      <div className={`p-2.5 rounded-xl border ${
+                        isLatencySpike
+                          ? 'bg-rose-950/60 border-rose-500/40'
+                          : 'bg-slate-950/80 border-amber-900/40'
+                      }`}>
+                        <div className="text-[10px] text-slate-400 font-medium">Canary P95</div>
+                        <div className={`text-lg font-mono font-bold ${isLatencySpike ? 'text-rose-400' : 'text-amber-300'}`}>
+                          {canary.p95LatencyMs}ms
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono">P99: {canary.p99LatencyMs}ms</div>
+                      </div>
+                    </div>
+
+                    {isLatencySpike && (
+                      <div className="text-[10px] text-rose-400 flex items-center gap-1 font-mono">
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        <span>Exceeds 450ms Auto-Rollback threshold!</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card 3: Error Rate & HTTP Panics */}
+                  <div className={`rounded-2xl border p-4 space-y-3 ${
+                    isErrorSpike
+                      ? 'border-rose-500/50 bg-rose-950/20'
+                      : 'border-slate-800 bg-slate-900/60'
+                  }`}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-medium">Error Rate</span>
+                      {errDelta <= 0 ? (
+                        <span className="text-[11px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40">
+                          Nominal ({canary.errorRate}%)
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-mono font-bold text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800/40">
+                          +{errDelta.toFixed(2)}% Surge
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                        <div className="text-[10px] text-slate-400 font-medium">Stable</div>
+                        <div className="text-lg font-mono font-bold text-slate-200">{stable.errorRate}%</div>
+                        <div className="text-[10px] text-slate-500 font-mono">5xx: {stable.statusCodes.status5xx}</div>
+                      </div>
+
+                      <div className={`p-2.5 rounded-xl border ${
+                        isErrorSpike
+                          ? 'bg-rose-950/60 border-rose-500/40'
+                          : 'bg-slate-950/80 border-amber-900/40'
+                      }`}>
+                        <div className="text-[10px] text-slate-400 font-medium">Canary</div>
+                        <div className={`text-lg font-mono font-bold ${isErrorSpike ? 'text-rose-400' : 'text-amber-300'}`}>
+                          {canary.errorRate}%
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono">5xx: {canary.statusCodes.status5xx}</div>
+                      </div>
+                    </div>
+
+                    {isErrorSpike && (
+                      <div className="text-[10px] text-rose-400 flex items-center gap-1 font-mono">
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        <span>Exceeds 2.0% SLA Threshold!</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card 4: Resource Footprint (CPU & Memory) */}
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-medium">Resource Footprint</span>
+                      <Cpu className="w-4 h-4 text-indigo-400" />
+                    </div>
+
+                    <div className="space-y-2 pt-1 text-xs font-mono">
+                      <div>
+                        <div className="flex justify-between text-[11px] mb-1">
+                          <span className="text-slate-400">CPU Usage:</span>
+                          <span className="text-slate-200">Stable {stable.cpuUsagePercent}% · <span className="text-amber-400">Canary {canary.cpuUsagePercent}%</span></span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden flex">
+                          <div style={{ width: `${canary.cpuUsagePercent}%` }} className="bg-amber-400 h-full" />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-[11px] mb-1">
+                          <span className="text-slate-400">Memory RSS:</span>
+                          <span className="text-slate-200">Stable {stable.memoryUsageMb}MB · <span className="text-amber-400">Canary {canary.memoryUsageMb}MB</span></span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden flex">
+                          <div style={{ width: `${Math.min(100, (canary.memoryUsageMb / 1024) * 100)}%` }} className="bg-indigo-500 h-full" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Section 4: Canary Simulated Fault Injection & Stress Testing */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <Flame className="w-4 h-4 text-amber-400" />
+                  <span>Canary Fault Injection & Auto-Rollback Simulator</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Simulate canary regressions to verify how health checks, alert thresholds, and circuit breakers respond in real time.
+                </p>
+              </div>
+
+              <div className="text-xs font-mono text-slate-400">
+                Active Fault: <span className="text-amber-400 font-bold uppercase">{status?.canaryDeployment?.simulatedFault || 'NONE'}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              {[
+                {
+                  id: 'none',
+                  title: 'Nominal Baseline',
+                  desc: 'Healthy dual-pass pipeline. Sub-60ms p95 latency, 0.04% error rate.',
+                  badge: 'Healthy Baseline',
+                  badgeColor: 'text-emerald-400 border-emerald-800 bg-emerald-950/40'
+                },
+                {
+                  id: 'latency_spike',
+                  title: 'Latency Spike (+540ms)',
+                  desc: 'Downstream Gemini API latency degradation. Exceeds 450ms rollback threshold.',
+                  badge: 'Latency Gate Fail',
+                  badgeColor: 'text-amber-400 border-amber-800 bg-amber-950/40'
+                },
+                {
+                  id: 'null_pointer_500',
+                  title: 'HTTP 500 Panic Surge',
+                  desc: 'Unhandled schema parse panic on dual-pass verification. Error rate surges to 5.4%.',
+                  badge: 'SLA Breach (5.4%)',
+                  badgeColor: 'text-rose-400 border-rose-800 bg-rose-950/40'
+                },
+                {
+                  id: 'memory_leak',
+                  title: 'Memory Leak (940MB)',
+                  desc: 'Context memory leak on dual-pass synthesis. Memory rises to 940MB with CPU 89%.',
+                  badge: 'OOM Risk',
+                  badgeColor: 'text-purple-400 border-purple-800 bg-purple-950/40'
+                },
+                {
+                  id: 'rate_limit',
+                  title: 'HTTP 429 Token Limit',
+                  desc: 'Quota exhaustion on model synthesis endpoints. Triggers client retry backoff.',
+                  badge: 'Quota Exhaustion',
+                  badgeColor: 'text-cyan-400 border-cyan-800 bg-cyan-950/40'
+                }
+              ].map((faultItem) => {
+                const isSelected = (status?.canaryDeployment?.simulatedFault || 'none') === faultItem.id;
+                return (
+                  <button
+                    key={faultItem.id}
+                    onClick={() => handleSetCanaryFault(faultItem.id)}
+                    className={`p-3.5 rounded-xl text-left transition-all border cursor-pointer flex flex-col justify-between space-y-2 ${
+                      isSelected
+                        ? 'bg-amber-500/10 border-amber-500/60 shadow-md shadow-amber-950/30'
+                        : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 hover:bg-slate-900/60'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1.5">
+                        <span className={`text-xs font-bold ${isSelected ? 'text-amber-300' : 'text-slate-200'}`}>
+                          {faultItem.title}
+                        </span>
+                        {isSelected && <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />}
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        {faultItem.desc}
+                      </p>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800/60">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono border ${faultItem.badgeColor}`}>
+                        {faultItem.badge}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Section 5: Real-Time Live Request Stream (Canary Router Inspection) */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <Terminal className="w-4 h-4 text-indigo-400" />
+                  <span>Real-Time Request Routing Log (Canary vs Stable Stream)</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Live inspect synthetic and user requests arriving at the gateway to confirm traffic routing accuracy.
+                </p>
+              </div>
+
+              {/* Filter Tabs */}
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-medium">
+                {(['all', 'canary', 'stable', 'errors'] as const).map((filter) => {
+                  const isActive = canaryRequestFilter === filter;
+                  return (
+                    <button
+                      key={filter}
+                      onClick={() => setCanaryRequestFilter(filter)}
+                      className={`px-3 py-1 rounded-lg capitalize transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-slate-800 text-slate-100 font-bold'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {filter}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Request Table / List */}
+            <div className="rounded-xl border border-slate-800 bg-slate-950/80 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-900/90 text-[11px] font-mono text-slate-400 border-b border-slate-800">
+                    <tr>
+                      <th className="py-2.5 px-3">Routing Variant</th>
+                      <th className="py-2.5 px-3">Method & Endpoint</th>
+                      <th className="py-2.5 px-3">Persona / Client IP</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Latency</th>
+                      <th className="py-2.5 px-3 text-right">Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                    {(() => {
+                      const reqs = status?.canaryDeployment?.recentRequests || [];
+                      const filtered = reqs.filter((r) => {
+                        if (canaryRequestFilter === 'canary') return r.version === 'canary';
+                        if (canaryRequestFilter === 'stable') return r.version === 'stable';
+                        if (canaryRequestFilter === 'errors') return r.status === 'error' || r.statusCode >= 400;
+                        return true;
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-slate-500 font-sans">
+                              No requests match the selected filter. Click "Simulate Live Burst" to generate traffic.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return filtered.map((req) => {
+                        const isCanary = req.version === 'canary';
+                        return (
+                          <tr key={req.id} className="hover:bg-slate-900/40 transition-colors">
+                            <td className="py-2.5 px-3 whitespace-nowrap">
+                              {isCanary ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 w-fit">
+                                  <GitBranch className="w-2.5 h-2.5" />
+                                  <span>CANARY v2.5</span>
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/30 flex items-center gap-1 w-fit">
+                                  <Server className="w-2.5 h-2.5" />
+                                  <span>STABLE v2.4</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap">
+                              <span className="font-bold text-slate-300 mr-1.5">{req.method}</span>
+                              <span className="text-slate-400">{req.endpoint}</span>
+                            </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap text-slate-400 font-sans">
+                              <div className="font-medium text-slate-300">{req.persona || 'Synthetic Agent'}</div>
+                              <div className="text-[10px] font-mono text-slate-500">{req.clientIp}</div>
+                            </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                req.statusCode === 200
+                                  ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/40'
+                                  : req.statusCode === 429
+                                  ? 'bg-amber-950/60 text-amber-400 border-amber-800/40'
+                                  : 'bg-rose-950/60 text-rose-400 border-rose-800/40'
+                              }`}>
+                                {req.statusCode} {req.statusCode === 200 ? 'OK' : req.statusCode === 429 ? 'Too Many Requests' : 'Internal Error'}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap">
+                              <span className={`${
+                                req.latencyMs < 100
+                                  ? 'text-emerald-400 font-bold'
+                                  : req.latencyMs < 300
+                                  ? 'text-amber-400'
+                                  : 'text-rose-400 font-bold'
+                              }`}>
+                                {req.latencyMs}ms
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 whitespace-nowrap text-right text-slate-500 text-[10px]">
+                              {new Date(req.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

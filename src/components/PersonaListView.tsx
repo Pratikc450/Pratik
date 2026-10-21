@@ -29,13 +29,23 @@ export const PersonaListView: React.FC<PersonaListViewProps> = ({
   const [addedSuccess, setAddedSuccess] = useState(false);
 
   const loadPersonas = () => {
+    if (!selectedProductId) {
+      setLoading(false);
+      return;
+    }
     fetch(`/api/products/${selectedProductId}`)
-      .then(res => res.json())
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type');
+        return ct && ct.includes('application/json') ? res.json() : null;
+      })
       .then(data => {
-        const p = (data.artifacts || []).find((a: any) => a.taskType === 'USER_PERSONAS' || a.taskType === 'PERSONAS');
-        setPersonasArtifact(p);
-        if (Array.isArray(data.personas)) {
-          setExtraPersonas(data.personas);
+        if (data) {
+          const p = (data.artifacts || []).find((a: any) => a.taskType === 'USER_PERSONAS' || a.taskType === 'PERSONAS');
+          setPersonasArtifact(p);
+          if (Array.isArray(data.personas)) {
+            setExtraPersonas(data.personas);
+          }
         }
         setLoading(false);
       })

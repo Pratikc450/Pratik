@@ -144,13 +144,16 @@ export const PrdVersionComparisonView: React.FC<PrdVersionComparisonViewProps> =
   // Sync version selections if artifact changes
   React.useEffect(() => {
     if (availableVersions.length >= 2) {
-      setVersionA(availableVersions[availableVersions.length - 2].version);
-      setVersionB(availableVersions[availableVersions.length - 1].version);
+      const targetA = availableVersions[availableVersions.length - 2].version;
+      const targetB = availableVersions[availableVersions.length - 1].version;
+      setVersionA(prev => prev === targetA ? prev : targetA);
+      setVersionB(prev => prev === targetB ? prev : targetB);
     } else if (availableVersions.length === 1) {
-      setVersionA(availableVersions[0].version);
-      setVersionB(availableVersions[0].version);
+      const target = availableVersions[0].version;
+      setVersionA(prev => prev === target ? prev : target);
+      setVersionB(prev => prev === target ? prev : target);
     }
-  }, [selectedArtifactId, availableVersions]);
+  }, [selectedArtifactId, availableVersions.length]);
 
   const objA = useMemo(() => {
     return availableVersions.find(v => v.version === versionA) || availableVersions[0];

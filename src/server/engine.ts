@@ -435,7 +435,20 @@ Fix only the fields listed above to satisfy the strict schema contract. Keep eve
     schemaData: validatedData,
     renderedMarkdown,
     metadata,
-    consistencyIssues: consistencyIssues.length > 0 ? consistencyIssues : undefined
+    consistencyIssues: consistencyIssues.length > 0 ? consistencyIssues : undefined,
+    versionHistory: [
+      {
+        version: 1,
+        status: 'DRAFT',
+        createdAt: metadata.createdAt || new Date().toISOString(),
+        createdBy: 'AI Spec Generator (Gemini 3.5 Flash)',
+        changeSummary: `Initial ${req.taskType.replace(/_/g, ' ')} draft synthesized from product context`,
+        schemaData: validatedData,
+        schemaVersion: targetSchemaVersion,
+        renderedMarkdown,
+        metadata: { ...metadata }
+      }
+    ]
   };
 
   db.saveArtifact(artifact);

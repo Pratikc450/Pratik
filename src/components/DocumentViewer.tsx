@@ -19,7 +19,8 @@ import {
   Share2,
   GitCompare,
   FileDown,
-  FileCode
+  FileCode,
+  History
 } from 'lucide-react';
 import { ArtifactDiffViewer } from './ArtifactDiffViewer.js';
 import { exportArtifactPdf, exportToMarkdown, exportToJson } from '../utils/exportUtils.js';
@@ -30,6 +31,7 @@ interface DocumentViewerProps {
   isApproving: boolean;
   onChainTask?: (nextTask: 'USER_STORIES' | 'KPIS' | 'ROADMAP' | 'EXPERIMENTS', seedPrompt: string) => void;
   onRefreshArtifact?: (updatedArtifact: GeneratedArtifact) => void;
+  onOpenVersionHistory?: () => void;
 }
 
 export const DocumentViewer: React.FC<DocumentViewerProps> = ({
@@ -37,7 +39,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   onApprove,
   isApproving,
   onChainTask,
-  onRefreshArtifact
+  onRefreshArtifact,
+  onOpenVersionHistory
 }) => {
   const [viewMode, setViewMode] = useState<'prose' | 'json' | 'rice' | 'diff'>('prose');
   const [copied, setCopied] = useState(false);
@@ -318,6 +321,17 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             >
               <GitCompare className="w-3.5 h-3.5" />
               <span>Version Diff</span>
+            </button>
+          )}
+
+          {onOpenVersionHistory && (
+            <button
+              onClick={onOpenVersionHistory}
+              className="px-2.5 py-1 rounded text-xs font-medium flex items-center space-x-1.5 transition-colors cursor-pointer text-purple-300 hover:text-purple-100 bg-purple-950/60 hover:bg-purple-900/80 border border-purple-800/80 shadow-xs"
+              title="Open artifact version history and approval gate timeline"
+            >
+              <History className="w-3.5 h-3.5 text-purple-400" />
+              <span>Version History ({artifact.versionHistory?.length || 1})</span>
             </button>
           )}
         </div>

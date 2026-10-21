@@ -23,6 +23,7 @@ import {
 import { Product, GeneratedArtifact } from '../types.js';
 import { ArtifactDiffViewer, VersionOption } from './ArtifactDiffViewer.js';
 import { PrdVersionComparisonView } from './PrdVersionComparisonView.js';
+import { InlinePrdStructuralDiff } from './InlinePrdStructuralDiff.js';
 import { ArtifactCommentDrawer, RequirementAnchor } from './ArtifactCommentDrawer.js';
 import { exportArtifactPdf, exportToMarkdown } from '../utils/exportUtils.js';
 
@@ -54,6 +55,7 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
   const [diffVersionA, setDiffVersionA] = useState<number>(1);
   const [diffVersionB, setDiffVersionB] = useState<number>(2);
   const [selectedPrdId, setSelectedPrdId] = useState<string | null>(null);
+  const [expandedInlineDiffPrdId, setExpandedInlineDiffPrdId] = useState<string | null>(null);
 
   // New revision modal state
   const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
@@ -90,17 +92,27 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
   };
 
   const fetchPrds = () => {
+    if (!selectedProductId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     fetch(`/api/products/${selectedProductId}`)
-      .then(res => res.json())
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type');
+        return ct && ct.includes('application/json') ? res.json() : null;
+      })
       .then(data => {
-        const prds = (data.artifacts || []).filter((a: any) => a.taskType === 'PRD');
-        setArtifacts(prds);
-        if (prds.length > 0 && !selectedPrdId) {
-          setSelectedPrdId(prds[0].id);
+        if (data) {
+          const prds = (data.artifacts || []).filter((a: any) => a.taskType === 'PRD');
+          setArtifacts(prds);
+          if (prds.length > 0 && !selectedPrdId) {
+            setSelectedPrdId(prds[0].id);
+          }
+          loadCommentCounts(prds);
         }
         setLoading(false);
-        loadCommentCounts(prds);
       })
       .catch(() => setLoading(false));
   };
@@ -460,14 +472,30 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
                       )}
                     </button>
 
+                    {/* Inline Structural Diff Toggle */}
+                    {versionCount > 1 && (
+                      <button
+                        onClick={() => setExpandedInlineDiffPrdId(prev => prev === art.id ? null : art.id)}
+                        className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm border cursor-pointer ${
+                          expandedInlineDiffPrdId === art.id
+                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-indigo-950/40'
+                            : 'bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border-indigo-800/80'
+                        }`}
+                        title="Toggle inline structural diff viewer showing differences between saved iterations"
+                      >
+                        <GitCompare className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>{expandedInlineDiffPrdId === art.id ? 'Close Inline Diff' : 'Inline Structural Diff'}</span>
+                      </button>
+                    )}
+
                     {/* Compare Versions Action */}
                     <button
                       onClick={() => handleOpenDiff(art, selectedVersionNum, art.version)}
-                      className="px-3 py-2 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/80 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-sm"
-                      title="Open Side-by-Side Version Diff"
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer"
+                      title="Open Full Side-by-Side Version Diff"
                     >
-                      <GitCompare className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Compare Versions</span>
+                      <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Full Diff</span>
                     </button>
 
                     <button
@@ -578,6 +606,23 @@ export const PrdListView: React.FC<PrdListViewProps> = ({
                     )}
                   </div>
                 </div>
+
+                {/* INLINE STRUCTURAL DIFF VIEWER (CURRENT VS PREVIOUS SAVED ITERATIONS) */}
+                {expandedInlineDiffPrdId === art.id && (
+                  <InlinePrdStructuralDiff
+                    artifact={art}
+                    versionHistory={versionHistory}
+                    currentSelectedVersion={selectedVersionNum}
+                    productName={activeProduct?.name || 'Product'}
+                    onOpenFullComparison={(vA, vB) => {
+                      setSelectedPrdId(art.id);
+                      setDiffVersionA(vA);
+                      setDiffVersionB(vB);
+                      setViewTab('comparison');
+                    }}
+                    onClose={() => setExpandedInlineDiffPrdId(null)}
+                  />
+                )}
 
                 {/* Functional Requirements Summary */}
                 {functionalReqs.length > 0 && (

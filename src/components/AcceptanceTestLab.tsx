@@ -129,12 +129,20 @@ export const AcceptanceTestLab: React.FC<AcceptanceTestLabProps> = ({
   // 1. Fetch Product Backlog & Stories on Mount / Product Change
   useEffect(() => {
     let isMounted = true;
+    if (!selectedProductId) {
+      setIsLoadingProduct(false);
+      return;
+    }
     setIsLoadingProduct(true);
 
     fetch(`/api/products/${selectedProductId}`)
-      .then(res => res.json())
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type');
+        return ct && ct.includes('application/json') ? res.json() : null;
+      })
       .then(data => {
-        if (!isMounted) return;
+        if (!isMounted || !data) return;
         setActiveProductData(data.product || null);
 
         // Extract stories from artifacts or sprint stories

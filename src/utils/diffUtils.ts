@@ -381,8 +381,8 @@ export function computeRoadmapDiff(dataA: any = {}, dataB: any = {}): RoadmapStr
   strategicPillars.forEach(i => countItem(i.type));
 
   // Quarters & Initiatives
-  const qA: any[] = dataA.quarterHorizons || [];
-  const qB: any[] = dataB.quarterHorizons || [];
+  const qA: any[] = dataA.quarterHorizons || dataA.quarters || [];
+  const qB: any[] = dataB.quarterHorizons || dataB.quarters || [];
 
   const quartersMapA = new Map<string, any>(qA.map(q => [q.quarter, q]));
   const quartersMapB = new Map<string, any>(qB.map(q => [q.quarter, q]));

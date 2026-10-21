@@ -62,14 +62,20 @@ export const WorkspaceBrowser: React.FC<WorkspaceBrowserProps> = ({
   const [newDocUntrusted, setNewDocUntrusted] = useState(true);
 
   const fetchProduct = async () => {
+    if (!selectedProductId) return;
     try {
       const res = await fetch(`/api/products/${selectedProductId}`);
       if (res.ok) {
-        const data = await res.json();
-        setProductData(data);
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (data && data.product) {
+            setProductData(data);
+          }
+        }
       }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to fetch product details', err);
     }
   };
 

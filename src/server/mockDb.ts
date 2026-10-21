@@ -22,7 +22,11 @@ import {
   AppWebhook,
   WebhookDeliveryLog,
   WebhookEventType,
-  WebhooksOverviewStats
+  WebhooksOverviewStats,
+  MultiStepPipelineJob,
+  PrdSectionFeedback,
+  SharedProjectLink,
+  AnalyticsEvent
 } from '../types.js';
 import { renderArtifactToProse } from './renderer.js';
 
@@ -50,6 +54,13 @@ class ProductPilotDatabase {
     reason: string;
     retryAfterSeconds: number;
   }> = [];
+
+  // Multi-Step Pipeline, Collaboration & Analytics Stores
+  pipelineJobs: Map<string, MultiStepPipelineJob> = new Map();
+  pipelineCache: Map<string, any> = new Map();
+  sectionFeedbacks: Map<string, PrdSectionFeedback[]> = new Map();
+  sharedLinks: Map<string, SharedProjectLink> = new Map();
+  analyticsEvents: AnalyticsEvent[] = [];
   
   // Organization token budget (Section 6 & Acceptance Test 7)
   tokenBudgetLimit = 50000;
@@ -1773,6 +1784,105 @@ class ProductPilotDatabase {
       }
     ];
     this.comments.set('art_stories_banking', storiesBankingComments);
+
+    // -------------------------------------------------------------
+    // 6. Seed Iteration & Approval History Audit Trail
+    // -------------------------------------------------------------
+    const now = Date.now();
+    const seedAuditTrail: AuditLogEntry[] = [
+      {
+        id: 'audit_prd_b3',
+        artifactId: 'art_prd_banking',
+        taskType: 'PRD',
+        action: 'MODIFIED',
+        userId: 'Lead Product Manager',
+        timestamp: new Date(now - 30 * 60000).toISOString(),
+        details: 'Proposed draft revision v3: Added Okta SAML 2.0 (FR-107) and AI Liquidity Scenario Simulator (FR-108).'
+      },
+      {
+        id: 'audit_prd_b2',
+        artifactId: 'art_prd_banking',
+        taskType: 'PRD',
+        action: 'APPROVED',
+        userId: 'Alex Rivera (VP of Product)',
+        timestamp: new Date(now - 2 * 3600000).toISOString(),
+        details: 'Official Specification v2 Approved: Promoted FR-103 to MUST, Added Biometric Wire Sign-off, Tightened p95 Latency SLA to 400ms. Governance Gate Passed.'
+      },
+      {
+        id: 'audit_prd_b1',
+        artifactId: 'art_prd_banking',
+        taskType: 'PRD',
+        action: 'GENERATED',
+        userId: 'AI Spec Generator (Gemini 3.5 Flash)',
+        timestamp: new Date(now - 48 * 3600000).toISOString(),
+        details: 'Generated initial PRD v1 baseline draft with 6 core functional requirements, PCI-DSS compliance, and SLA targets.'
+      },
+      {
+        id: 'audit_rm_b3',
+        artifactId: 'art_roadmap_banking',
+        taskType: 'ROADMAP',
+        action: 'MODIFIED',
+        userId: 'Lead Product Manager',
+        timestamp: new Date(now - 45 * 60000).toISOString(),
+        details: 'Global Expansion Revision v3: Added Multi-Currency Settlement Pools and FX Liquidity Routing.'
+      },
+      {
+        id: 'audit_rm_b2',
+        artifactId: 'art_roadmap_banking',
+        taskType: 'ROADMAP',
+        action: 'APPROVED',
+        userId: 'Alex Rivera (VP of Product)',
+        timestamp: new Date(now - 3 * 3600000).toISOString(),
+        details: 'Executive Roadmap Sign-off v2: Accelerated Gateway, Added SAML SSO, Shifted Biometric Approvals to Q2, Added Q4 AI Copilot Horizon.'
+      },
+      {
+        id: 'audit_rm_b1',
+        artifactId: 'art_roadmap_banking',
+        taskType: 'ROADMAP',
+        action: 'GENERATED',
+        userId: 'AI Spec Generator (Gemini 3.5 Flash)',
+        timestamp: new Date(now - 48 * 3600000).toISOString(),
+        details: 'Generated initial 3-Quarter Delivery Horizon Draft (Q1-Q3 2027) with milestone dependencies.'
+      },
+      {
+        id: 'audit_st_b2',
+        artifactId: 'art_stories_banking',
+        taskType: 'USER_STORIES',
+        action: 'APPROVED',
+        userId: 'Alex Rivera (VP of Product)',
+        timestamp: new Date(now - 3 * 3600000).toISOString(),
+        details: 'RICE prioritization calibrated and approved for Sprint 1 core delivery execution.'
+      },
+      {
+        id: 'audit_st_b1',
+        artifactId: 'art_stories_banking',
+        taskType: 'USER_STORIES',
+        action: 'GENERATED',
+        userId: 'AI Spec Generator (Gemini 3.5 Flash)',
+        timestamp: new Date(now - 48 * 3600000).toISOString(),
+        details: 'Generated 6 initial user stories with acceptance criteria, Gherkin scenarios, and RICE scores.'
+      },
+      {
+        id: 'audit_prd_pf2',
+        artifactId: 'art_prd_payflow',
+        taskType: 'PRD',
+        action: 'APPROVED',
+        userId: 'Alex Rivera (VP of Product)',
+        timestamp: new Date(now - 4 * 3600000).toISOString(),
+        details: 'Approved PayFlow Underwriting Modal Specification v2 with 99.95% availability SLA.'
+      },
+      {
+        id: 'audit_rm_pf2',
+        artifactId: 'art_roadmap_payflow',
+        taskType: 'ROADMAP',
+        action: 'APPROVED',
+        userId: 'Alex Rivera (VP of Product)',
+        timestamp: new Date(now - 5 * 3600000).toISOString(),
+        details: 'Roadmap v2 sign-off: Added ERP Webhooks and Accelerated Risk Scoring Engine.'
+      }
+    ];
+
+    this.auditLogs.unshift(...seedAuditTrail);
   }
 
   getProduct(id: string): Product | undefined {
@@ -2959,6 +3069,141 @@ class ProductPilotDatabase {
     if (!hook) return null;
 
     return this.testWebhook(hook.id, existing.event);
+  }
+
+  // ==========================================
+  // MULTI-STEP PIPELINE JOB METHODS
+  // ==========================================
+  savePipelineJob(job: MultiStepPipelineJob) {
+    this.pipelineJobs.set(job.id, job);
+    if (job.ideaHash) {
+      this.pipelineCache.set(job.ideaHash, job);
+    }
+    return job;
+  }
+
+  getPipelineJob(id: string): MultiStepPipelineJob | undefined {
+    return this.pipelineJobs.get(id);
+  }
+
+  getCachedPipelineJob(ideaHash: string): MultiStepPipelineJob | undefined {
+    return this.pipelineCache.get(ideaHash);
+  }
+
+  // ==========================================
+  // PRD & ROADMAP SECTION FEEDBACK METHODS
+  // ==========================================
+  addSectionFeedback(fb: Omit<PrdSectionFeedback, 'id' | 'createdAt'>): PrdSectionFeedback {
+    const feedback: PrdSectionFeedback = {
+      id: `fb_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: new Date().toISOString(),
+      ...fb
+    };
+    const key = fb.artifactId || fb.jobId || 'global';
+    const list = this.sectionFeedbacks.get(key) || [];
+    list.unshift(feedback);
+    this.sectionFeedbacks.set(key, list);
+    this.logAnalyticsEvent('feedback_submitted', {
+      sectionKey: fb.sectionKey,
+      rating: fb.rating,
+      targetId: key
+    });
+    return feedback;
+  }
+
+  getSectionFeedbacks(targetId: string): PrdSectionFeedback[] {
+    return this.sectionFeedbacks.get(targetId) || [];
+  }
+
+  // ==========================================
+  // EXPIRING REVOCABLE SHARED PROJECT LINKS
+  // ==========================================
+  createSharedLink(data: {
+    productId: string;
+    productName: string;
+    createdBy?: string;
+    expiresInHours?: number;
+    note?: string;
+  }): SharedProjectLink {
+    const token = `sh_${crypto.randomBytes(16).toString('hex')}`;
+    const hours = data.expiresInHours || 72; // default 3 days
+    const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
+
+    const link: SharedProjectLink = {
+      token,
+      productId: data.productId,
+      productName: data.productName,
+      createdBy: data.createdBy || 'Workspace Admin',
+      createdAt: new Date().toISOString(),
+      expiresAt,
+      isRevoked: false,
+      accessCount: 0,
+      permissions: 'read_only',
+      note: data.note
+    };
+
+    this.sharedLinks.set(token, link);
+    this.logAnalyticsEvent('share_created', {
+      token,
+      productId: data.productId,
+      expiresAt
+    });
+    return link;
+  }
+
+  getSharedLink(token: string): SharedProjectLink | undefined {
+    const link = this.sharedLinks.get(token);
+    if (!link) return undefined;
+    if (link.isRevoked) return undefined;
+    if (new Date(link.expiresAt).getTime() < Date.now()) return undefined;
+    link.accessCount += 1;
+    return link;
+  }
+
+  revokeSharedLink(token: string): boolean {
+    const link = this.sharedLinks.get(token);
+    if (!link) return false;
+    link.isRevoked = true;
+    return true;
+  }
+
+  getSharedLinksForProduct(productId: string): SharedProjectLink[] {
+    const links: SharedProjectLink[] = [];
+    for (const link of this.sharedLinks.values()) {
+      if (link.productId === productId && !link.isRevoked) {
+        links.push(link);
+      }
+    }
+    return links.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  // ==========================================
+  // PRIVACY-FRIENDLY ANALYTICS EVENTS
+  // ==========================================
+  logAnalyticsEvent(type: AnalyticsEvent['type'], metadata: Record<string, any> = {}): AnalyticsEvent {
+    const event: AnalyticsEvent = {
+      id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      type,
+      metadata: { ...metadata },
+      timestamp: new Date().toISOString()
+    };
+    this.analyticsEvents.unshift(event);
+    if (this.analyticsEvents.length > 300) {
+      this.analyticsEvents = this.analyticsEvents.slice(0, 300);
+    }
+    return event;
+  }
+
+  getAnalyticsSummary() {
+    const counts: Record<string, number> = {};
+    for (const ev of this.analyticsEvents) {
+      counts[ev.type] = (counts[ev.type] || 0) + 1;
+    }
+    return {
+      totalEvents: this.analyticsEvents.length,
+      counts,
+      recentEvents: this.analyticsEvents.slice(0, 20)
+    };
   }
 }
 

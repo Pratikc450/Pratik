@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 import { Product, GeneratedArtifact } from '../types.js';
 import { ArtifactDiffViewer, VersionOption } from './ArtifactDiffViewer.js';
+import { RoadmapVersionComparisonView } from './RoadmapVersionComparisonView.js';
+import { InlineRoadmapStructuralDiff } from './InlineRoadmapStructuralDiff.js';
 import { exportArtifactPdf, exportToMarkdown, exportRoadmapToCsv, RoadmapCsvFormat } from '../utils/exportUtils.js';
 import { RoadmapGenerator } from './RoadmapGenerator.js';
 
@@ -59,14 +61,18 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
   const [diffVersionA, setDiffVersionA] = useState<number>(1);
   const [diffVersionB, setDiffVersionB] = useState<number>(2);
   const [selectedRoadmapId, setSelectedRoadmapId] = useState<string | null>(null);
+  const [isInlineDiffOpen, setIsInlineDiffOpen] = useState(false);
+
+  // Interactive Version History Switcher State (artifactId -> versionNumber)
+  const [selectedVersions, setSelectedVersions] = useState<Record<string, number>>({});
 
   // New revision modal state
   const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
   const [revisionSummary, setRevisionSummary] = useState('');
   const [isSubmittingRevision, setIsSubmittingRevision] = useState(false);
 
-  // AI Roadmap Visualizer (Gantt-Style Timeline) State
-  const [roadmapViewMode, setRoadmapViewMode] = useState<'HORIZONS' | 'GANTT_TIMELINE'>('HORIZONS');
+  // AI Roadmap Visualizer (Gantt-Style Timeline) & Version Diff State
+  const [roadmapViewMode, setRoadmapViewMode] = useState<'HORIZONS' | 'GANTT_TIMELINE' | 'VERSION_DIFF'>('HORIZONS');
 
   // AI Roadmap Generator Modal State
   const [isRoadmapGeneratorOpen, setIsRoadmapGeneratorOpen] = useState(false);
@@ -79,14 +85,24 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
   const [schedulerSuccess, setSchedulerSuccess] = useState<string | null>(null);
 
   const fetchRoadmaps = () => {
+    if (!selectedProductId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     fetch(`/api/products/${selectedProductId}`)
-      .then(res => res.json())
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type');
+        return ct && ct.includes('application/json') ? res.json() : null;
+      })
       .then(data => {
-        const rms = (data.artifacts || []).filter((a: any) => a.taskType === 'ROADMAP');
-        setArtifacts(rms);
-        if (rms.length > 0 && !selectedRoadmapId) {
-          setSelectedRoadmapId(rms[0].id);
+        if (data) {
+          const rms = (data.artifacts || []).filter((a: any) => a.taskType === 'ROADMAP');
+          setArtifacts(rms);
+          if (rms.length > 0 && !selectedRoadmapId) {
+            setSelectedRoadmapId(rms[0].id);
+          }
         }
         setLoading(false);
       })
@@ -222,9 +238,26 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
     }
   };
 
-  // Quarters data to render
-  const schema = activeRoadmap?.schemaData || (activeRoadmap as any)?.parsedContent || {};
-  const quarters = schema.quarterHorizons || [
+  // Version lineage & selected iteration
+  const versionHistory = activeRoadmap?.versionHistory && activeRoadmap.versionHistory.length > 0 
+    ? activeRoadmap.versionHistory 
+    : [{
+        version: activeRoadmap?.version || 1,
+        status: activeRoadmap?.status || 'DRAFT',
+        createdAt: activeRoadmap?.metadata?.createdAt || new Date().toISOString(),
+        createdBy: activeRoadmap?.metadata?.approvedBy || 'PM Lead',
+        changeSummary: 'Baseline roadmap snapshot',
+        schemaData: activeRoadmap?.schemaData,
+        renderedMarkdown: activeRoadmap?.renderedMarkdown
+      }];
+
+  const selectedVersionNum = selectedVersions[activeRoadmap?.id || ''] ?? activeRoadmap?.version ?? 1;
+  const currentIteration = versionHistory.find(v => v.version === selectedVersionNum) || versionHistory[versionHistory.length - 1];
+  const isHistorical = activeRoadmap && selectedVersionNum !== activeRoadmap.version;
+
+  // Quarters data to render for the currently selected iteration
+  const schema = currentIteration?.schemaData || (currentIteration as any)?.parsedContent || activeRoadmap?.schemaData || {};
+  const quarters = schema.quarterHorizons || schema.quarters || [
     {
       quarter: 'Q1 2027',
       theme: 'Instant Underwriting Foundation & Checkout Conversion',
@@ -250,7 +283,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
     }
   ];
 
-  const versionCount = activeRoadmap?.versionHistory ? activeRoadmap.versionHistory.length : 1;
+  const versionCount = versionHistory.length;
 
   return (
     <div className="space-y-6">
@@ -270,7 +303,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
           <select
             value={selectedProductId}
             onChange={(e) => onSelectProduct(e.target.value)}
-            className="bg-slate-900 text-xs font-semibold text-slate-200 border border-slate-800 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500"
+            className="bg-slate-900 text-xs font-semibold text-slate-200 border border-slate-800 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 cursor-pointer"
           >
             {products.map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
@@ -285,7 +318,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
                 <div className="inline-flex rounded-lg shadow-xs">
                   <button
                     onClick={() => handleExportCsv(activeRoadmap, csvFormat)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-l-lg bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 text-xs font-semibold border border-emerald-800/80 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-l-lg bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 text-xs font-semibold border border-emerald-800/80 transition-colors cursor-pointer"
                     title="Download Roadmap as CSV formatted for Jira / Asana import"
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
@@ -293,7 +326,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
                   </button>
                   <button
                     onClick={() => setIsCsvMenuOpen(!isCsvMenuOpen)}
-                    className="px-1.5 py-1.5 rounded-r-lg bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs border border-l-0 border-emerald-800/80 transition-colors"
+                    className="px-1.5 py-1.5 rounded-r-lg bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs border border-l-0 border-emerald-800/80 transition-colors cursor-pointer"
                     title="Select CSV format (Universal, Jira, or Asana)"
                   >
                     <ChevronDown className="w-3.5 h-3.5" />
@@ -310,7 +343,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
                         setCsvFormat('universal');
                         handleExportCsv(activeRoadmap, 'universal');
                       }}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between cursor-pointer ${
                         csvFormat === 'universal'
                           ? 'bg-emerald-500/20 text-emerald-300 font-semibold'
                           : 'text-slate-300 hover:bg-slate-800'
@@ -327,7 +360,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
                         setCsvFormat('jira');
                         handleExportCsv(activeRoadmap, 'jira');
                       }}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between cursor-pointer ${
                         csvFormat === 'jira'
                           ? 'bg-emerald-500/20 text-emerald-300 font-semibold'
                           : 'text-slate-300 hover:bg-slate-800'
@@ -344,7 +377,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
                         setCsvFormat('asana');
                         handleExportCsv(activeRoadmap, 'asana');
                       }}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between ${
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between cursor-pointer ${
                         csvFormat === 'asana'
                           ? 'bg-emerald-500/20 text-emerald-300 font-semibold'
                           : 'text-slate-300 hover:bg-slate-800'
@@ -362,7 +395,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
 
               <button
                 onClick={() => handleExportPdf(activeRoadmap)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 text-rose-200 text-xs font-semibold border border-rose-800/80 transition-colors shadow-xs"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 text-rose-200 text-xs font-semibold border border-rose-800/80 transition-colors shadow-xs cursor-pointer"
                 title="Export Official Roadmap as PDF"
               >
                 <FileDown className="w-3.5 h-3.5 text-rose-400" />
@@ -370,34 +403,13 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
               </button>
               <button
                 onClick={() => handleExportMarkdown(activeRoadmap)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer"
                 title="Export Roadmap as Markdown"
               >
                 <Download className="w-3.5 h-3.5 text-blue-400" />
                 <span>Export .md</span>
               </button>
             </div>
-          )}
-
-          {/* Quick Side-by-Side Diff Trigger Button */}
-          {activeRoadmap && (
-            <button
-              onClick={() => {
-                if (isDiffOpen) {
-                  setIsDiffOpen(false);
-                } else {
-                  handleOpenDiff(activeRoadmap);
-                }
-              }}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition-all border ${
-                isDiffOpen
-                  ? 'bg-blue-600 text-white border-blue-500 shadow-blue-500/20'
-                  : 'bg-blue-950/80 hover:bg-blue-900 text-blue-300 border-blue-800/80'
-              }`}
-            >
-              <GitCompare className="w-3.5 h-3.5" />
-              <span>{isDiffOpen ? 'Close Diff View' : 'Compare Versions (Diff)'}</span>
-            </button>
           )}
 
           <button
@@ -410,7 +422,7 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
 
           <button
             onClick={() => onNavigateTab('ai-workspace')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold shadow-sm transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold shadow-sm transition-colors cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5 text-blue-400" />
             <span>Full Workspace Suite</span>
@@ -425,183 +437,396 @@ export const RoadmapListView: React.FC<RoadmapListViewProps> = ({
         </div>
       )}
 
-      {/* Side-by-Side Diff Section (Toggled) */}
-      {isDiffOpen && activeRoadmap && availableVersions.length > 0 && (
-        <div className="transition-all animate-in fade-in duration-300">
-          <ArtifactDiffViewer
-            taskType="ROADMAP"
-            productName={activeProduct?.name || 'Active Product'}
-            versions={availableVersions}
+      {/* Primary Sub-Tab Switcher: Horizons Board | Execution Timeline | Structural Version Diff */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+        <div className="flex items-center space-x-1">
+          <button
+            onClick={() => setRoadmapViewMode('HORIZONS')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all cursor-pointer ${
+              roadmapViewMode === 'HORIZONS'
+                ? 'bg-slate-800 text-slate-100 shadow-sm border border-slate-700'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Map className="w-3.5 h-3.5 text-blue-400" />
+            <span>Delivery Horizons Board</span>
+          </button>
+          <button
+            onClick={() => setRoadmapViewMode('GANTT_TIMELINE')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all cursor-pointer ${
+              roadmapViewMode === 'GANTT_TIMELINE'
+                ? 'bg-slate-800 text-slate-100 shadow-sm border border-slate-700'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Execution Timeline (Gantt)</span>
+          </button>
+          <button
+            onClick={() => setRoadmapViewMode('VERSION_DIFF')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all cursor-pointer ${
+              roadmapViewMode === 'VERSION_DIFF'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <GitCompare className="w-3.5 h-3.5" />
+            <span>Structural Version Diff</span>
+            {availableVersions.length > 1 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-blue-950 text-blue-200 border border-blue-700">
+                {availableVersions.length} iterations
+              </span>
+            )}
+          </button>
+        </div>
+
+        {roadmapViewMode === 'VERSION_DIFF' && (
+          <div className="text-xs text-slate-400 font-mono flex items-center gap-2 px-2">
+            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+            <span>Synchronized Diff: Base Iteration vs. Comparison Iteration</span>
+          </div>
+        )}
+      </div>
+
+      {/* Main View: Either Dedicated Structural Version Diff View OR Roadmap Board / Gantt */}
+      {roadmapViewMode === 'VERSION_DIFF' && activeProduct ? (
+        <div className="animate-in fade-in duration-300">
+          <RoadmapVersionComparisonView
+            product={activeProduct}
+            artifacts={artifacts}
+            initialArtifactId={selectedRoadmapId || activeRoadmap?.id}
             initialVersionA={diffVersionA}
             initialVersionB={diffVersionB}
-            onClose={() => setIsDiffOpen(false)}
-            onCreateRevision={() => setIsRevisionModalOpen(true)}
+            onClose={() => setRoadmapViewMode('HORIZONS')}
+            onCreateRevision={(artId) => {
+              setSelectedRoadmapId(artId);
+              setIsRevisionModalOpen(true);
+            }}
           />
         </div>
-      )}
+      ) : (
+        /* Standard Detail Views: Horizons or Gantt Timeline */
+        <div className="space-y-5">
+          {/* Active Roadmap Overview Bar */}
+          {activeRoadmap && (
+            <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/80 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold text-slate-100">
+                    {activeProduct?.name} Delivery Horizon Roadmap
+                  </span>
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${
+                    currentIteration.status === 'APPROVED' 
+                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' 
+                      : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  }`}>
+                    {currentIteration.status} v{selectedVersionNum}.0
+                  </span>
 
-      {/* Active Roadmap Overview Bar */}
-      {activeRoadmap && (
-        <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/80 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-bold text-slate-100">
-                {activeProduct?.name} Delivery Horizon Roadmap
-              </span>
-              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${
-                activeRoadmap.status === 'APPROVED' 
-                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' 
-                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-              }`}>
-                {activeRoadmap.status} v{activeRoadmap.version}.0
-              </span>
+                  {versionCount > 1 && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30">
+                      <History className="w-3 h-3 text-blue-400" />
+                      <span>{versionCount} Versions Available</span>
+                    </span>
+                  )}
 
-              {versionCount > 1 && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30">
-                  <History className="w-3 h-3 text-blue-400" />
-                  <span>{versionCount} Versions Available</span>
+                  {isHistorical && (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
+                      Viewing Historical Iteration
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 max-w-3xl">
+                  {schema.vision || activeProduct?.vision}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {/* Inline Structural Diff Trigger */}
+                {versionCount > 1 && (
+                  <button
+                    onClick={() => setIsInlineDiffOpen(!isInlineDiffOpen)}
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm border cursor-pointer ${
+                      isInlineDiffOpen
+                        ? 'bg-blue-600 text-white border-blue-500 shadow-blue-950/40'
+                        : 'bg-blue-950/80 hover:bg-blue-900 text-blue-300 border-blue-800/80'
+                    }`}
+                    title="Toggle inline structural diff viewer showing differences between saved iterations"
+                  >
+                    <GitCompare className="w-3.5 h-3.5 text-blue-400" />
+                    <span>{isInlineDiffOpen ? 'Close Inline Diff' : 'Inline Structural Diff'}</span>
+                  </button>
+                )}
+
+                {/* Compare Versions in Full Comparison View */}
+                <button
+                  onClick={() => {
+                    setDiffVersionA(selectedVersionNum > 1 ? selectedVersionNum - 1 : 1);
+                    setDiffVersionB(selectedVersionNum);
+                    setRoadmapViewMode('VERSION_DIFF');
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  title="Open Dedicated Structural Version Diff View"
+                >
+                  <Layers className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Full Diff View</span>
+                </button>
+
+                <button
+                  onClick={() => setIsRevisionModalOpen(true)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  title="Create a new revision snapshot"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Revision</span>
+                </button>
+
+                <button
+                  onClick={() => handleExportPdf(activeRoadmap)}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer ${
+                    currentIteration.status === 'APPROVED'
+                      ? 'bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-800/80'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                  }`}
+                  title={currentIteration.status === 'APPROVED' ? "Export Official Approved Roadmap PDF" : "Export Draft Roadmap PDF"}
+                >
+                  <FileDown className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Export PDF</span>
+                </button>
+
+                <button
+                  onClick={() => handleExportMarkdown(activeRoadmap)}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  title="Export Roadmap as Markdown"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-400" />
+                  <span>.md</span>
+                </button>
+
+                <button
+                  onClick={() => handleCopy(activeRoadmap.id, currentIteration.renderedMarkdown || activeRoadmap.renderedMarkdown || '')}
+                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs flex items-center gap-1 cursor-pointer"
+                  title="Copy Markdown"
+                >
+                  {copiedId === activeRoadmap.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedId === activeRoadmap.id ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* INTERACTIVE ROADMAP ITERATION SELECTOR BAR */}
+          <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/90 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5 text-blue-400" />
+                <span>Iteration Selector:</span>
+              </span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {versionHistory.map((vh) => {
+                  const isSelected = selectedVersionNum === vh.version;
+                  const isLive = vh.version === activeRoadmap.version;
+                  return (
+                    <button
+                      key={vh.version}
+                      onClick={() => setSelectedVersions(prev => ({ ...prev, [activeRoadmap.id]: vh.version }))}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all border cursor-pointer ${
+                        isSelected 
+                          ? 'bg-blue-600 text-white border-blue-500 shadow-sm scale-105' 
+                          : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border-slate-800 hover:border-slate-700'
+                      }`}
+                      title={vh.changeSummary || `Version v${vh.version}.0`}
+                    >
+                      <span>v{vh.version}.0</span>
+                      {isLive && (
+                        <span className="text-[9px] font-sans px-1 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 font-semibold">
+                          Live
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Historical Iteration Notice & Switcher */}
+            <div className="flex items-center gap-2.5 text-xs">
+              {isHistorical ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-300 font-medium text-[11px]">
+                    Note: {currentIteration.changeSummary || `Iteration v${selectedVersionNum}.0`}
+                  </span>
+                  <button
+                    onClick={() => setSelectedVersions(prev => ({ ...prev, [activeRoadmap.id]: activeRoadmap.version }))}
+                    className="px-2 py-0.5 rounded bg-blue-950 hover:bg-blue-900 text-blue-300 border border-blue-800/60 font-semibold transition-colors cursor-pointer"
+                  >
+                    Switch to Live (v{activeRoadmap.version}.0)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDiffVersionA(selectedVersionNum);
+                      setDiffVersionB(activeRoadmap.version);
+                      setRoadmapViewMode('VERSION_DIFF');
+                    }}
+                    className="px-2 py-0.5 rounded bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/60 font-semibold transition-colors cursor-pointer"
+                  >
+                    Compare against Live Diff
+                  </button>
+                </div>
+              ) : (
+                <span className="text-[11px] text-slate-500 italic">
+                  Viewing active production roadmap iteration
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 max-w-3xl">
-              {schema.vision || activeProduct?.vision}
-            </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              onClick={() => handleOpenDiff(activeRoadmap)}
-              className="px-3.5 py-2 rounded-xl bg-blue-950/80 hover:bg-blue-900 text-blue-300 border border-blue-800/80 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-sm"
-              title="Open Side-by-Side Version Diff"
-            >
-              <GitCompare className="w-3.5 h-3.5 text-blue-400" />
-              <span>Compare Versions</span>
-            </button>
+          {/* INLINE ROADMAP STRUCTURAL DIFF VIEWER */}
+          {isInlineDiffOpen && (
+            <InlineRoadmapStructuralDiff
+              artifact={activeRoadmap}
+              versionHistory={versionHistory}
+              currentSelectedVersion={selectedVersionNum}
+              productName={activeProduct?.name || 'Product'}
+              onOpenFullComparison={(vA, vB) => {
+                setDiffVersionA(vA);
+                setDiffVersionB(vB);
+                setRoadmapViewMode('VERSION_DIFF');
+              }}
+              onClose={() => setIsInlineDiffOpen(false)}
+            />
+          )}
 
-            <button
-              onClick={() => setIsRevisionModalOpen(true)}
-              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors text-xs font-semibold flex items-center gap-1.5"
-              title="Create a new revision snapshot"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>New Revision</span>
-            </button>
-
-            {/* Download as CSV Action */}
-            <button
-              onClick={() => handleExportCsv(activeRoadmap, csvFormat)}
-              className="px-3 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 border border-emerald-800/80 transition-colors text-xs font-semibold flex items-center gap-1.5 shadow-xs"
-              title="Download Roadmap as CSV for Jira or Asana import"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{csvDownloaded ? 'Downloaded CSV!' : 'Download as CSV'}</span>
-            </button>
-
-            <button
-              onClick={() => handleExportPdf(activeRoadmap)}
-              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm ${
-                activeRoadmap.status === 'APPROVED'
-                  ? 'bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-800/80'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
-              }`}
-              title={activeRoadmap.status === 'APPROVED' ? "Export Official Approved Roadmap PDF" : "Export Draft Roadmap PDF"}
-            >
-              <FileDown className="w-3.5 h-3.5 text-rose-400" />
-              <span>Export PDF</span>
-            </button>
-
-            <button
-              onClick={() => handleExportMarkdown(activeRoadmap)}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs font-semibold flex items-center gap-1.5"
-              title="Export Roadmap as Markdown"
-            >
-              <Download className="w-3.5 h-3.5 text-blue-400" />
-              <span>.md</span>
-            </button>
-
-            <button
-              onClick={() => handleCopy(activeRoadmap.id, activeRoadmap.renderedMarkdown || '')}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs flex items-center gap-1"
-              title="Copy Markdown"
-            >
-              {copiedId === activeRoadmap.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedId === activeRoadmap.id ? 'Copied' : 'Copy'}</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Version Lineage Quick Bar */}
-      {activeRoadmap?.versionHistory && activeRoadmap.versionHistory.length > 1 && (
-        <div className="p-3 rounded-xl bg-slate-900/40 border border-slate-800/80 flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-semibold text-slate-400 flex items-center gap-1.5">
-            <History className="w-3.5 h-3.5 text-blue-400" />
-            <span>Version Lineage:</span>
-          </span>
-          {activeRoadmap.versionHistory.map((vh) => (
-            <button
-              key={vh.version}
-              onClick={() => handleOpenDiff(activeRoadmap, vh.version, activeRoadmap.version)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono transition-colors border ${
-                vh.version === activeRoadmap.version
-                  ? 'bg-blue-950 text-blue-300 border-blue-800 font-semibold'
-                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border-slate-800'
-              }`}
-              title={vh.changeSummary || `Version v${vh.version}.0`}
-            >
-              <span>v{vh.version}.0</span>
-              <span className="text-[9px] uppercase px-1 rounded bg-slate-800/80 text-slate-400">{vh.status}</span>
-            </button>
-          ))}
-          <span className="text-[11px] text-slate-500 italic ml-2">
-            (Click any version to compare against current spec)
-          </span>
-        </div>
-      )}
-
-      {/* Quarter Horizons Board */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {quarters.map((q: any, idx: number) => (
-          <div key={idx} className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-4 flex flex-col justify-between">
-            <div>
+          {/* VIEW MODE 1: GANTT EXECUTION TIMELINE */}
+          {roadmapViewMode === 'GANTT_TIMELINE' && (
+            <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-5">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <span className="font-mono text-xs font-bold text-blue-400 px-2.5 py-1 rounded-md bg-blue-950/60 border border-blue-800/60">
-                  {q.quarter}
-                </span>
-                <span className="text-[11px] text-slate-500 font-medium">
-                  {q.initiatives ? q.initiatives.length : 0} Initiatives
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-indigo-400" />
+                    <span>Quarterly Execution Gantt Timeline (v{selectedVersionNum}.0)</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Delivery sequencing and duration across {quarters.length} strategic horizons.
+                  </p>
+                </div>
+                <span className="text-xs font-mono text-slate-400">
+                  Total Initiatives: {quarters.reduce((acc: number, q: any) => acc + (q.initiatives?.length || 0), 0)}
                 </span>
               </div>
 
-              <div className="mt-3">
-                <h3 className="text-xs font-bold text-slate-200 leading-snug">{q.theme}</h3>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {(q.initiatives || []).map((init: any, iIdx: number) => (
-                  <div key={iIdx} className="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 space-y-2 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-slate-200">{init.title}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
-                        init.priority === 'P0' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' :
-                        init.priority === 'P1' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' :
-                        'bg-slate-800 text-slate-400'
-                      }`}>
-                        {init.priority}
+              <div className="space-y-6">
+                {quarters.map((q: any, qIdx: number) => (
+                  <div key={qIdx} className="space-y-3">
+                    <div className="flex items-center justify-between bg-slate-950/60 px-3 py-2 rounded-xl border border-slate-800/80">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-blue-400 px-2 py-0.5 rounded bg-blue-950 border border-blue-800">
+                          {q.quarter}
+                        </span>
+                        <span className="text-xs font-bold text-slate-200">{q.theme}</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        {(q.initiatives || []).reduce((acc: number, i: any) => acc + (i.estimatedEffortWeeks || 0), 0)} Weeks Allocated
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">{init.description}</p>
-                    <div className="pt-2 flex items-center justify-between text-[10px] text-slate-500 border-t border-slate-900 font-mono">
-                      <span>{init.estimatedEffortWeeks} weeks</span>
-                      <span className="text-blue-400/90 truncate max-w-[140px]">{init.targetOutcome}</span>
+
+                    <div className="space-y-2 pl-2 border-l-2 border-slate-800">
+                      {(q.initiatives || []).map((init: any, iIdx: number) => {
+                        const effort = init.estimatedEffortWeeks || 4;
+                        const widthPct = Math.min(100, Math.max(20, effort * 10));
+
+                        return (
+                          <div key={iIdx} className="p-3 rounded-xl bg-slate-950/80 border border-slate-850 space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2 font-semibold text-slate-200">
+                                <span className="font-mono text-[10px] text-slate-500">{init.id}</span>
+                                <span>{init.title}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${
+                                  init.priority === 'P0' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
+                                  init.priority === 'P1' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                                  'bg-slate-800 text-slate-400'
+                                }`}>
+                                  {init.priority}
+                                </span>
+                                <span className="font-mono text-[11px] text-slate-400">{effort}w duration</span>
+                              </div>
+                            </div>
+
+                            {/* Gantt Bar Visualization */}
+                            <div className="h-3 rounded-full bg-slate-900 border border-slate-800 overflow-hidden">
+                              <div
+                                style={{ width: `${widthPct}%` }}
+                                className={`h-full rounded-full transition-all ${
+                                  init.priority === 'P0' ? 'bg-gradient-to-r from-rose-500 to-amber-500' :
+                                  init.priority === 'P1' ? 'bg-gradient-to-r from-blue-500 to-indigo-500' :
+                                  'bg-gradient-to-r from-slate-600 to-slate-500'
+                                }`}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                              <p className="line-clamp-1">{init.description}</p>
+                              <span className="font-mono text-blue-400 text-[10px] shrink-0 ml-2">{init.targetOutcome}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          )}
+
+          {/* VIEW MODE 2: QUARTER HORIZONS BOARD */}
+          {roadmapViewMode === 'HORIZONS' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {quarters.map((q: any, idx: number) => (
+                <div key={idx} className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                      <span className="font-mono text-xs font-bold text-blue-400 px-2.5 py-1 rounded-md bg-blue-950/60 border border-blue-800/60">
+                        {q.quarter}
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-medium">
+                        {q.initiatives ? q.initiatives.length : 0} Initiatives
+                      </span>
+                    </div>
+
+                    <div className="mt-3">
+                      <h3 className="text-xs font-bold text-slate-200 leading-snug">{q.theme}</h3>
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      {(q.initiatives || []).map((init: any, iIdx: number) => (
+                        <div key={iIdx} className="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-slate-200">{init.title}</span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
+                              init.priority === 'P0' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' :
+                              init.priority === 'P1' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' :
+                              'bg-slate-800 text-slate-400'
+                            }`}>
+                              {init.priority}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 leading-relaxed">{init.description}</p>
+                          <div className="pt-2 flex items-center justify-between text-[10px] text-slate-500 border-t border-slate-900 font-mono">
+                            <span>{init.estimatedEffortWeeks} weeks</span>
+                            <span className="text-blue-400/90 truncate max-w-[140px]">{init.targetOutcome}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Create Revision Modal */}
       {isRevisionModalOpen && (

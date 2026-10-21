@@ -58,11 +58,20 @@ export default function App() {
   useEffect(() => {
     if (selectedProductId) {
       fetch(`/api/products/${selectedProductId}`)
-        .then(res => res.json())
+        .then(async (res) => {
+          if (!res.ok) return null;
+          const ct = res.headers.get('content-type');
+          if (ct && ct.includes('application/json')) {
+            return res.json();
+          }
+          return null;
+        })
         .then(data => {
-          const storyArt = data.artifacts?.find((a: any) => a.taskType === 'USER_STORIES');
-          if (storyArt?.schemaData?.stories) {
-            setAnalyticsStories(storyArt.schemaData.stories);
+          if (data && data.artifacts) {
+            const storyArt = data.artifacts.find((a: any) => a.taskType === 'USER_STORIES');
+            if (storyArt?.schemaData?.stories) {
+              setAnalyticsStories(storyArt.schemaData.stories);
+            }
           }
         })
         .catch(err => console.warn('Failed to fetch analytics stories', err));
@@ -149,17 +158,23 @@ export default function App() {
       ]);
 
       if (prodRes.ok) {
-        const pData = await prodRes.json();
-        setProducts(pData.products || []);
-        if (pData.products && pData.products.length > 0 && !selectedProductId) {
-          setSelectedProductId(pData.products[0].id);
+        const ct = prodRes.headers.get('content-type');
+        if (ct && ct.includes('application/json')) {
+          const pData = await prodRes.json();
+          setProducts(pData.products || []);
+          if (pData.products && pData.products.length > 0 && !selectedProductId) {
+            setSelectedProductId(pData.products[0].id);
+          }
         }
       }
 
       if (telRes.ok) {
-        const tData = await telRes.json();
-        setTokenBudgetUsed(tData.tokenBudgetUsed || 41000);
-        setTokenBudgetLimit(tData.tokenBudgetLimit || 50000);
+        const ct = telRes.headers.get('content-type');
+        if (ct && ct.includes('application/json')) {
+          const tData = await telRes.json();
+          setTokenBudgetUsed(tData.tokenBudgetUsed || 41000);
+          setTokenBudgetLimit(tData.tokenBudgetLimit || 50000);
+        }
       }
     } catch (err) {
       console.error('Failed to load workspace data', err);

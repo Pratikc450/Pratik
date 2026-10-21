@@ -2,12 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Bot, 
   Mic, 
+  MicOff,
   Image as ImageIcon, 
   Video, 
   Search, 
   MapPin, 
   Music, 
   Volume2, 
+  VolumeX,
   Send, 
   Sparkles, 
   Copy, 
@@ -22,7 +24,11 @@ import {
   Sliders, 
   Download,
   Flame,
-  Radio
+  Radio,
+  Cloud,
+  StopCircle,
+  Headphones,
+  Trash2
 } from 'lucide-react';
 import { 
   ChatMessage, 
@@ -407,45 +413,274 @@ export const AiCopilotHub: React.FC<AiCopilotHubProps> = ({
 
   // --- 8. LIVE VOICE CONVERSATION STATE ---
   const [isLiveConnected, setIsLiveConnected] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(false);
   const [liveVoiceStatus, setLiveVoiceStatus] = useState('Standby');
-  const [liveTranscripts, setLiveTranscripts] = useState<Array<{ sender: 'user' | 'model'; text: string }>>([
-    { sender: 'model', text: 'Live Voice Copilot connected via gemini-3.8-live. Speak your strategy or prioritization question.' }
-  ]);
-  const liveWsRef = useRef<WebSocket | null>(null);
+  const [selectedVoice, setSelectedVoice] = useState<'Zephyr' | 'Puck' | 'Charon' | 'Kore' | 'Fenrir'>('Zephyr');
+  const [micLevel, setMicLevel] = useState(0);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [liveTypedInput, setLiveTypedInput] = useState('');
+  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const toggleLiveVoice = () => {
+  const [liveTranscripts, setLiveTranscripts] = useState<Array<{ sender: 'user' | 'model'; text: string; time?: string }>>([
+    { sender: 'model', text: 'Live Voice Copilot connected via gemini-3.8-live. Speak into your microphone or type your strategic product question.', time: 'Ready' }
+  ]);
+
+  const liveWsRef = useRef<WebSocket | null>(null);
+  const inputAudioCtxRef = useRef<AudioContext | null>(null);
+  const outputAudioCtxRef = useRef<AudioContext | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const nextStartTimeRef = useRef<number>(0);
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const transcriptBottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Convert Float32Array PCM to 16-bit little-endian base64 string
+  const floatTo16BitPCMBase64 = (input: Float32Array): string => {
+    const buffer = new ArrayBuffer(input.length * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < input.length; i++) {
+      const s = Math.max(-1, Math.min(1, input[i]));
+      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  };
+
+  // Playback raw L16 PCM at 24kHz using AudioBufferSourceNode
+  const playAudioChunk = (outputCtx: AudioContext, base64Data: string) => {
+    try {
+      const binary = window.atob(base64Data);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const pcm16 = new Int16Array(bytes.buffer);
+      const float32 = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 32768.0;
+      }
+
+      const audioBuffer = outputCtx.createBuffer(1, float32.length, 24000);
+      audioBuffer.copyToChannel(float32, 0);
+
+      const sourceNode = outputCtx.createBufferSource();
+      sourceNode.buffer = audioBuffer;
+      sourceNode.connect(outputCtx.destination);
+
+      const currentTime = outputCtx.currentTime;
+      if (nextStartTimeRef.current < currentTime) {
+        nextStartTimeRef.current = currentTime;
+      }
+      sourceNode.start(nextStartTimeRef.current);
+      nextStartTimeRef.current += audioBuffer.duration;
+
+      activeSourcesRef.current.push(sourceNode);
+      setIsSpeaking(true);
+      sourceNode.onended = () => {
+        activeSourcesRef.current = activeSourcesRef.current.filter(s => s !== sourceNode);
+        if (activeSourcesRef.current.length === 0) {
+          setIsSpeaking(false);
+        }
+      };
+    } catch (err) {
+      console.warn('[Live Audio Playback Error]', err);
+    }
+  };
+
+  const stopAllAudio = () => {
+    activeSourcesRef.current.forEach(s => {
+      try { s.stop(); } catch {}
+    });
+    activeSourcesRef.current = [];
+    if (outputAudioCtxRef.current) {
+      nextStartTimeRef.current = outputAudioCtxRef.current.currentTime;
+    }
+    setIsSpeaking(false);
+  };
+
+  const cleanupAudio = () => {
+    if (audioProcessorRef.current) {
+      try { audioProcessorRef.current.disconnect(); } catch {}
+      audioProcessorRef.current = null;
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach(t => t.stop());
+      micStreamRef.current = null;
+    }
+    if (inputAudioCtxRef.current) {
+      try { inputAudioCtxRef.current.close(); } catch {}
+      inputAudioCtxRef.current = null;
+    }
+    stopAllAudio();
+    if (outputAudioCtxRef.current) {
+      try { outputAudioCtxRef.current.close(); } catch {}
+      outputAudioCtxRef.current = null;
+    }
+    if (liveWsRef.current) {
+      try { liveWsRef.current.close(); } catch {}
+      liveWsRef.current = null;
+    }
+    setIsLiveConnected(false);
+    setLiveVoiceStatus('Disconnected');
+    setMicLevel(0);
+  };
+
+  useEffect(() => {
+    return () => {
+      cleanupAudio();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeSubTab === 'voice' && transcriptBottomRef.current) {
+      transcriptBottomRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [liveTranscripts, activeSubTab]);
+
+  const toggleLiveVoice = async () => {
     if (isLiveConnected) {
-      liveWsRef.current?.close();
-      setIsLiveConnected(false);
-      setLiveVoiceStatus('Disconnected');
+      cleanupAudio();
     } else {
       try {
+        setLiveVoiceStatus('Connecting...');
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/live`;
         const ws = new WebSocket(wsUrl);
         liveWsRef.current = ws;
 
+        // Initialize output AudioContext at 24kHz for model playback
+        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        const outputCtx = new AudioCtxClass({ sampleRate: 24000 });
+        if (outputCtx.state === 'suspended') {
+          await outputCtx.resume();
+        }
+        outputAudioCtxRef.current = outputCtx;
+        nextStartTimeRef.current = outputCtx.currentTime;
+
+        // Initialize input AudioContext at 16kHz for mic capture
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micStreamRef.current = stream;
+
+          const inputCtx = new AudioCtxClass({ sampleRate: 16000 });
+          inputAudioCtxRef.current = inputCtx;
+          const source = inputCtx.createMediaStreamSource(stream);
+          const processor = inputCtx.createScriptProcessor(4096, 1, 1);
+          audioProcessorRef.current = processor;
+
+          source.connect(processor);
+          processor.connect(inputCtx.destination);
+
+          processor.onaudioprocess = (e) => {
+            if (isMicMuted) {
+              setMicLevel(0);
+              return;
+            }
+            if (liveWsRef.current?.readyState === WebSocket.OPEN) {
+              const inputData = e.inputBuffer.getChannelData(0);
+              let sum = 0;
+              for (let i = 0; i < inputData.length; i++) {
+                sum += inputData[i] * inputData[i];
+              }
+              const rms = Math.sqrt(sum / inputData.length);
+              setMicLevel(Math.min(100, Math.round(rms * 450)));
+
+              const base64 = floatTo16BitPCMBase64(inputData);
+              liveWsRef.current.send(JSON.stringify({ audio: base64 }));
+            }
+          };
+        } catch (micErr) {
+          console.warn('Microphone permission not granted or mic unavailable. Fallback to text prompt active.', micErr);
+          setLiveVoiceStatus('Connected (Audio Output Active)');
+        }
+
         ws.onopen = () => {
           setIsLiveConnected(true);
-          setLiveVoiceStatus('Listening (gemini-3.8-live)');
+          if (micStreamRef.current) {
+            setLiveVoiceStatus('Live (gemini-3.8-live)');
+          }
+          ws.send(JSON.stringify({
+            voice: selectedVoice,
+            type: 'INIT'
+          }));
         };
 
         ws.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.text) {
-              setLiveTranscripts(prev => [...prev, { sender: 'model', text: msg.text }]);
+            if (msg.audio && outputAudioCtxRef.current) {
+              playAudioChunk(outputAudioCtxRef.current, msg.audio);
             }
-          } catch {}
+            if (msg.text) {
+              setLiveTranscripts(prev => [
+                ...prev,
+                { sender: msg.sender || 'model', text: msg.text, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+              ]);
+            }
+            if (msg.interrupted) {
+              stopAllAudio();
+            }
+          } catch (e) {
+            console.warn('Live WS message error', e);
+          }
         };
 
         ws.onclose = () => {
-          setIsLiveConnected(false);
-          setLiveVoiceStatus('Closed');
+          cleanupAudio();
         };
-      } catch (err) {
-        console.error('Live WS error', err);
+
+        ws.onerror = (err) => {
+          console.warn('Live WS error', err);
+          cleanupAudio();
+        };
+      } catch (err: any) {
+        console.error('Failed to initialize Live API session', err);
+        setLiveVoiceStatus('Connection Failed');
+        cleanupAudio();
       }
+    }
+  };
+
+  const handleSendLiveTextMessage = () => {
+    if (!liveTypedInput.trim()) return;
+    const text = liveTypedInput.trim();
+    setLiveTranscripts(prev => [
+      ...prev,
+      { sender: 'user', text, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+    ]);
+    setLiveTypedInput('');
+
+    if (liveWsRef.current?.readyState === WebSocket.OPEN) {
+      liveWsRef.current.send(JSON.stringify({ text }));
+    }
+  };
+
+  const handleSaveTranscriptToFirestore = async () => {
+    if (!user) return;
+    setIsSavingTranscript(true);
+    try {
+      const summaryText = liveTranscripts.map(t => `[${t.sender.toUpperCase()}] ${t.text}`).join('\n\n');
+      await persistAiAssetToFirestore(user.uid, {
+        id: `voice_session_${Date.now()}`,
+        productId: currentProduct?.id || 'prod_banking',
+        assetType: 'AUDIO_TRANSCRIPT',
+        title: `Live Voice Problem Solving (${currentProduct?.name || 'Workspace'})`,
+        prompt: `Voice session using model gemini-3.8-live with voice ${selectedVoice}`,
+        modelUsed: 'gemini-3.8-live',
+        mediaUrl: `data:text/plain;charset=utf-8,${encodeURIComponent(summaryText)}`
+      });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3500);
+    } catch (err) {
+      console.warn('Failed saving transcript to Firestore', err);
+    } finally {
+      setIsSavingTranscript(false);
     }
   };
 
@@ -1362,50 +1597,249 @@ export const AiCopilotHub: React.FC<AiCopilotHubProps> = ({
         )}
 
         {/* ========================================================= */}
-        {/* 8. LIVE VOICE CONVERSATION TAB */}
+        {/* 8. LIVE VOICE CONVERSATION TAB (gemini-3.8-live) */}
         {/* ========================================================= */}
         {activeSubTab === 'voice' && (
-          <div className="pt-4 space-y-4">
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 text-center space-y-4">
-              <div className="flex items-center justify-center space-x-2">
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-rose-950 text-rose-300 border border-rose-800 uppercase font-semibold">
-                  Model: gemini-3.8-live (Live API)
-                </span>
-                <span className="text-xs text-slate-400">Low-latency real-time voice sparring partner</span>
-              </div>
-
-              <div className="py-6 flex flex-col items-center justify-center space-y-4">
-                <button
-                  onClick={toggleLiveVoice}
-                  className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all ${
-                    isLiveConnected
-                      ? 'bg-rose-600 text-white animate-pulse ring-8 ring-rose-500/20'
-                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700 ring-4 ring-slate-700/30'
-                  }`}
-                >
-                  <Radio className="w-8 h-8" />
-                </button>
-
-                <div className="space-y-1">
-                  <span className="text-xs font-semibold text-slate-200">
-                    {isLiveConnected ? 'Live Audio Channel Active' : 'Voice Assistant Standby'}
+          <div className="pt-4 space-y-6">
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-6 space-y-6">
+              {/* Header Bar */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+                <div className="flex items-center space-x-2.5">
+                  <span className="p-2 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/30">
+                    <Radio className="w-5 h-5 animate-pulse" />
                   </span>
-                  <p className="text-[11px] text-slate-500">
-                    Status: <span className="text-rose-400 font-mono">{liveVoiceStatus}</span>
-                  </p>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-slate-100">Live Voice Problem Solver & Strategy Sparring</h3>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-rose-950 text-rose-300 border border-rose-800 uppercase font-semibold">
+                        gemini-3.8-live
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Sub-second real-time conversational problem solver for technical product management & architecture tradeoffs
+                    </p>
+                  </div>
+                </div>
+
+                {/* Voice Selection & Firestore Sync */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center space-x-1.5 bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-800 text-xs">
+                    <span className="text-slate-400">Voice:</span>
+                    <select
+                      value={selectedVoice}
+                      disabled={isLiveConnected}
+                      onChange={(e: any) => setSelectedVoice(e.target.value)}
+                      className="bg-transparent text-xs font-mono text-rose-300 font-semibold focus:outline-none cursor-pointer disabled:opacity-60"
+                    >
+                      <option value="Zephyr">Zephyr (Balanced & Clear)</option>
+                      <option value="Puck">Puck (Dynamic & Energetic)</option>
+                      <option value="Charon">Charon (Deep Executive)</option>
+                      <option value="Kore">Kore (Calm & Reflective)</option>
+                      <option value="Fenrir">Fenrir (Authoritative)</option>
+                    </select>
+                  </div>
+
+                  <button
+                    onClick={handleSaveTranscriptToFirestore}
+                    disabled={isSavingTranscript || liveTranscripts.length <= 1}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-40"
+                    title="Persist session notes and problem diagnosis to Firestore database"
+                  >
+                    <Cloud className="w-3.5 h-3.5" />
+                    <span>{saveSuccess ? 'Synced to Firestore!' : isSavingTranscript ? 'Saving...' : 'Sync to Firestore'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setLiveTranscripts([{ sender: 'model', text: 'Transcripts cleared. Ready for your next query.', time: 'New' }])}
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-all cursor-pointer"
+                    title="Clear transcripts"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
 
-              {/* Turn Transcripts */}
-              <div className="max-w-xl mx-auto bg-slate-900 border border-slate-800 rounded-xl p-4 text-left space-y-3 max-h-60 overflow-y-auto">
-                {liveTranscripts.map((t, idx) => (
-                  <div key={idx} className="text-xs space-y-1">
-                    <span className="font-semibold text-slate-400 uppercase text-[10px]">
-                      {t.sender === 'user' ? 'You' : 'Live PM Copilot (Zephyr Voice)'}:
-                    </span>
-                    <p className="text-slate-200">{t.text}</p>
+              {/* Central Voice Orb & Audio Controls */}
+              <div className="py-6 flex flex-col items-center justify-center space-y-5">
+                <div className="relative flex items-center justify-center">
+                  {/* Outer pulsating wave rings */}
+                  {isLiveConnected && (
+                    <>
+                      <div
+                        style={{ transform: `scale(${1 + micLevel * 0.012})` }}
+                        className="absolute w-36 h-36 rounded-full bg-rose-500/10 border border-rose-500/20 transition-transform duration-75 animate-pulse"
+                      />
+                      <div
+                        style={{ transform: `scale(${1 + micLevel * 0.007})` }}
+                        className="absolute w-28 h-28 rounded-full bg-rose-500/15 border border-rose-500/30 transition-transform duration-75"
+                      />
+                    </>
+                  )}
+
+                  {/* Main Action Button */}
+                  <button
+                    onClick={toggleLiveVoice}
+                    className={`relative z-10 w-24 h-24 rounded-full flex flex-col items-center justify-center shadow-2xl transition-all cursor-pointer ${
+                      isLiveConnected
+                        ? 'bg-gradient-to-tr from-rose-600 to-rose-500 text-white shadow-rose-900/50 ring-4 ring-rose-500/30'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 ring-4 ring-slate-800/40'
+                    }`}
+                  >
+                    {isLiveConnected ? (
+                      <>
+                        <Radio className="w-8 h-8 animate-pulse mb-1" />
+                        <span className="text-[10px] font-bold font-mono tracking-wider uppercase">Active</span>
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="w-8 h-8 text-rose-400 mb-1" />
+                        <span className="text-[10px] font-bold font-mono tracking-wider uppercase text-slate-300">Start</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Status & Mic Controls */}
+                <div className="text-center space-y-2">
+                  <div className="flex items-center justify-center space-x-2">
+                    <span className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-emerald-400 animate-ping' : 'bg-slate-600'}`} />
+                    <span className="text-xs font-bold text-slate-200">{liveVoiceStatus}</span>
                   </div>
-                ))}
+
+                  {isLiveConnected && (
+                    <div className="flex items-center justify-center gap-3 pt-1">
+                      <button
+                        onClick={() => setIsMicMuted(!isMicMuted)}
+                        className={`px-3 py-1 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition-all cursor-pointer ${
+                          isMicMuted
+                            ? 'bg-rose-950/80 text-rose-300 border-rose-800'
+                            : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        {isMicMuted ? <MicOff className="w-3.5 h-3.5 text-rose-400" /> : <Mic className="w-3.5 h-3.5 text-emerald-400" />}
+                        <span>{isMicMuted ? 'Mic Muted' : 'Mic Live'}</span>
+                      </button>
+
+                      {isSpeaking && (
+                        <span className="px-2.5 py-1 rounded-xl text-xs font-mono bg-indigo-950/70 text-indigo-300 border border-indigo-800 flex items-center gap-1.5">
+                          <Volume2 className="w-3.5 h-3.5 text-indigo-400 animate-bounce" />
+                          <span>AI Speaking (24kHz AudioContext)</span>
+                        </span>
+                      )}
+
+                      {/* Visual Audio Level Meter */}
+                      <div className="flex items-center gap-1 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">
+                        <span className="text-[10px] font-mono text-slate-400">Mic:</span>
+                        <div className="w-16 h-2 bg-slate-950 rounded-full overflow-hidden flex">
+                          <div
+                            style={{ width: `${Math.min(100, micLevel)}%` }}
+                            className="bg-emerald-400 h-full transition-all duration-75"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Problem-Solving Sparring Prompt Presets */}
+                <div className="w-full max-w-2xl space-y-2 pt-2">
+                  <div className="text-[11px] font-semibold text-slate-400 text-center flex items-center justify-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-rose-400" />
+                    <span>Quick Strategic Problem Sparring Prompts (Click to Send):</span>
+                  </div>
+
+                  <div className="flex flex-wrap justify-center gap-2 text-xs">
+                    {[
+                      'How to solve 34% KYC drop-off at Step 3 without breaking PSD2?',
+                      'Prioritize 5 checkout user stories using RICE framework',
+                      'What canary deployment percentage is safest for payment gateway v2.5?',
+                      'Draft Gherkin acceptance criteria for biometric passkey fallback'
+                    ].map((promptText, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          setLiveTranscripts(prev => [
+                            ...prev,
+                            { sender: 'user', text: promptText, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+                          ]);
+                          if (liveWsRef.current?.readyState === WebSocket.OPEN) {
+                            liveWsRef.current.send(JSON.stringify({ text: promptText }));
+                          } else {
+                            toggleLiveVoice();
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 hover:border-rose-900/40 text-[11px] transition-all cursor-pointer text-left"
+                      >
+                        "{promptText}"
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Two-Way Live Transcript Stream */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-indigo-400" />
+                    <span>Live Conversation Transcript Stream</span>
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-500">
+                    {liveTranscripts.length} exchanges · Gemini Live 3.8
+                  </span>
+                </div>
+
+                <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 text-left space-y-3 max-h-72 overflow-y-auto">
+                  {liveTranscripts.map((t, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                        t.sender === 'user'
+                          ? 'bg-slate-950/80 border-slate-800 ml-6 text-slate-200'
+                          : 'bg-rose-950/20 border-rose-900/30 mr-6 text-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={`font-bold uppercase text-[10px] font-mono flex items-center gap-1.5 ${
+                          t.sender === 'user' ? 'text-blue-400' : 'text-rose-400'
+                        }`}>
+                          {t.sender === 'user' ? <Mic className="w-3 h-3" /> : <Bot className="w-3 h-3" />}
+                          <span>{t.sender === 'user' ? 'You (Spoken / Typed)' : `Live PM Copilot (${selectedVoice})`}</span>
+                        </span>
+                        {t.time && <span className="text-[10px] font-mono text-slate-500">{t.time}</span>}
+                      </div>
+                      <p className="leading-relaxed whitespace-pre-wrap">{t.text}</p>
+                    </div>
+                  ))}
+                  <div ref={transcriptBottomRef} />
+                </div>
+              </div>
+
+              {/* Typed Input for Live Session (Dual-Mode Talk or Type) */}
+              <div className="pt-2 border-t border-slate-800/80">
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSendLiveTextMessage();
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <input
+                    type="text"
+                    value={liveTypedInput}
+                    onChange={(e) => setLiveTypedInput(e.target.value)}
+                    placeholder={isLiveConnected ? "Type a question or speak freely into your mic..." : "Connect live voice above or type a query here..."}
+                    className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-rose-500/60"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!liveTypedInput.trim()}
+                    className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-rose-950/60 transition-all cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Send</span>
+                  </button>
+                </form>
               </div>
             </div>
           </div>

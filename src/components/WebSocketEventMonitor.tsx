@@ -84,6 +84,7 @@ export const WebSocketEventMonitor: React.FC<WebSocketEventMonitorProps> = ({
   ]);
 
   const previousStatusRef = useRef<ConnectionStatus>(metrics.status);
+  const latencyHistoryRef = useRef(latencyHistory);
   const lastSpikeTimestampRef = useRef<number>(0);
   const reconnectAttemptCounterRef = useRef<number>(0);
 
@@ -181,16 +182,19 @@ export const WebSocketEventMonitor: React.FC<WebSocketEventMonitorProps> = ({
 
       // Update latency history buffer
       if (newMetrics.latencyMs > 0) {
+        const item = { time: new Date().toLocaleTimeString().split(' ')[0], latency: newMetrics.latencyMs };
+        latencyHistoryRef.current = [...latencyHistoryRef.current, item].slice(-20);
         setLatencyHistory(prev => {
-          const updated = [...prev, { time: new Date().toLocaleTimeString().split(' ')[0], latency: newMetrics.latencyMs }];
+          const updated = [...prev, item];
           return updated.slice(-20);
         });
       }
 
       // 2. Detect Latency Spikes
       if (newMetrics.status === 'connected' && newMetrics.latencyMs > 0) {
-        const baseline = latencyHistory.length > 0 
-          ? Math.round(latencyHistory.reduce((acc, c) => acc + c.latency, 0) / latencyHistory.length)
+        const history = latencyHistoryRef.current;
+        const baseline = history.length > 0 
+          ? Math.round(history.reduce((acc, c) => acc + c.latency, 0) / history.length)
           : 15;
 
         const isSpike = newMetrics.latencyMs >= spikeThresholdMs || (newMetrics.latencyMs >= baseline * 2.5 && baseline > 10);
@@ -237,7 +241,7 @@ export const WebSocketEventMonitor: React.FC<WebSocketEventMonitorProps> = ({
     });
 
     return () => unsubscribe();
-  }, [autoLogToAuditTrail, spikeThresholdMs, latencyHistory, selectedProductId]);
+  }, [autoLogToAuditTrail, spikeThresholdMs, selectedProductId]);
 
   // Initial event seeding if empty
   useEffect(() => {

@@ -21,9 +21,12 @@ import {
   Target,
   RefreshCw,
   HelpCircle,
-  ExternalLink
+  ExternalLink,
+  TrendingDown,
+  GitBranch
 } from 'lucide-react';
 import { Product, SprintStory, GeneratedArtifact } from '../types.js';
+import { CapacityPlanner } from './CapacityPlanner.js';
 
 interface SprintPlannerProps {
   selectedProductId: string;
@@ -42,6 +45,7 @@ export const SprintPlanner: React.FC<SprintPlannerProps> = ({
 }) => {
   const [velocity, setVelocity] = useState<number>(24); // default 24 story points
   const [sprintName, setSprintName] = useState<string>('Sprint 1 · Core Delivery');
+  const [sprintViewTab, setSprintViewTab] = useState<'backlog' | 'capacity'>('backlog');
   const [allBacklogStories, setAllBacklogStories] = useState<any[]>([]);
   const [sprintStories, setSprintStories] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -51,6 +55,10 @@ export const SprintPlanner: React.FC<SprintPlannerProps> = ({
 
   // Fetch stories and active state
   const loadStoriesAndRoadmap = async () => {
+    if (!selectedProductId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const [prodRes, activeRes] = await Promise.all([
@@ -62,9 +70,11 @@ export const SprintPlanner: React.FC<SprintPlannerProps> = ({
       let currentSprint: any[] = [];
 
       if (prodRes.ok) {
-        const prodData = await prodRes.json();
-        const storiesArt = (prodData.artifacts || []).find((a: any) => a.taskType === 'USER_STORIES');
-        const rmArt = (prodData.artifacts || []).find((a: any) => a.taskType === 'ROADMAP');
+        const ct = prodRes.headers.get('content-type');
+        if (ct && ct.includes('application/json')) {
+          const prodData = await prodRes.json();
+          const storiesArt = (prodData.artifacts || []).find((a: any) => a.taskType === 'USER_STORIES');
+          const rmArt = (prodData.artifacts || []).find((a: any) => a.taskType === 'ROADMAP');
 
         if (storiesArt?.schemaData?.stories) {
           availableStories = storiesArt.schemaData.stories.map((s: any, idx: number) => ({
@@ -86,13 +96,17 @@ export const SprintPlanner: React.FC<SprintPlannerProps> = ({
           setActiveRoadmapThemes(themes);
         }
       }
+    }
 
-      if (activeRes.ok) {
+    if (activeRes.ok) {
+      const ct = activeRes.headers.get('content-type');
+      if (ct && ct.includes('application/json')) {
         const activeData = await activeRes.json();
         if (activeData.sprintStories && activeData.sprintStories.length > 0) {
           currentSprint = activeData.sprintStories;
         }
       }
+    }
 
       // If no sprint stories exist yet, pre-populate using RICE-optimized selection
       if (currentSprint.length === 0 && availableStories.length > 0) {
@@ -270,6 +284,13 @@ export const SprintPlanner: React.FC<SprintPlannerProps> = ({
     document.body.removeChild(link);
   };
 
+  // Assign story member
+  const handleAssignStoryMember = (storyId: string, member: { name: string; role: string; avatarBg: string }) => {
+    setSprintStories(prev =>
+      prev.map(s => (s.id === storyId ? { ...s, assignee: member } : s))
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -327,6 +348,64 @@ export const SprintPlanner: React.FC<SprintPlannerProps> = ({
         </div>
       </div>
 
+      {/* Sub-Navigation Switcher: Backlog Pool vs Capacity Planner & Burn-down */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 p-1.5 rounded-2xl border border-slate-800">
+        <div className="flex items-center space-x-1.5">
+          <button
+            type="button"
+            onClick={() => setSprintViewTab('backlog')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer ${
+              sprintViewTab === 'backlog'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <ListTodo className="w-4 h-4" />
+            <span>Sprint Backlog Board</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-700/80 font-mono">
+              {sprintStories.length} Stories · {committedPoints} pts
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSprintViewTab('capacity')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer ${
+              sprintViewTab === 'capacity'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950/50'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Users className="w-4 h-4 text-indigo-300" />
+            <span>Capacity Planner & Resource Allocation</span>
+            <span className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-700/80 font-mono">
+              <TrendingDown className="w-3 h-3 text-emerald-400" />
+              <span>Burn-Down</span>
+            </span>
+          </button>
+        </div>
+
+        <div className="flex items-center space-x-2 px-3 text-xs text-slate-400">
+          <span className="font-semibold text-slate-300">Target Velocity:</span>
+          <span className="font-mono font-bold text-emerald-400">{velocity} pts</span>
+          <span className="text-slate-600">·</span>
+          <span>{capacityPercentage}% Allocated</span>
+        </div>
+      </div>
+
+      {sprintViewTab === 'capacity' ? (
+        <CapacityPlanner
+          selectedProductId={selectedProductId}
+          sprintStories={sprintStories}
+          committedPoints={committedPoints}
+          currentVelocity={velocity}
+          onApplyVelocity={(newVel) => setVelocity(newVel)}
+          onAssignStoryMember={handleAssignStoryMember}
+          onNavigateTab={onNavigateTab}
+        />
+      ) : (
+        <>
+
       {/* Capacity & Control Dashboard */}
       <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-emerald-950/20 to-slate-900 border border-emerald-500/30 shadow-lg space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
@@ -377,15 +456,24 @@ export const SprintPlanner: React.FC<SprintPlannerProps> = ({
             </div>
           </div>
 
-          {/* AI Auto-Balance Action */}
-          <div className="flex flex-col sm:flex-row items-center gap-3 md:justify-end">
+          {/* Actions & Capacity Planner Link */}
+          <div className="flex flex-col sm:flex-row items-center gap-2.5 md:justify-end">
+            <button
+              type="button"
+              onClick={() => setSprintViewTab('capacity')}
+              className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-indigo-300 hover:text-white border border-indigo-700/60 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Users className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Tune Squad Capacity & Burn-Down →</span>
+            </button>
+
             <button
               type="button"
               onClick={handleAiAutoBalance}
-              className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md shadow-emerald-950/60 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer"
+              className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md shadow-emerald-950/60 flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
-              <span>AI Auto-Balance Backlog (RICE)</span>
+              <span>AI Auto-Balance (RICE)</span>
             </button>
           </div>
         </div>
@@ -543,6 +631,8 @@ export const SprintPlanner: React.FC<SprintPlannerProps> = ({
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };

@@ -46,6 +46,41 @@ export interface ArtifactMetaDescriptor {
   iconName: string;
 }
 
+export type BatchActionType = 'bulk_generate' | 'auto_rice_score' | 'full_pipeline';
+export type BatchItemStatus = 'idle' | 'queued' | 'generating' | 'scoring' | 'complete' | 'error';
+
+export interface BatchQueueItem {
+  id: string;
+  type: ArtifactType;
+  label: string;
+  category: ArtifactCategory;
+  action: BatchActionType;
+  status: BatchItemStatus;
+  progressPercent: number;
+  activeStepMessage?: string;
+  customPrompt?: string;
+  tokensUsed?: number;
+  latencyMs?: number;
+  storiesScoredCount?: number;
+  topRiceScore?: number;
+  averageRiceScore?: number;
+  error?: string;
+  resultArtifactId?: string;
+  resultArtifact?: GeneratedArtifact;
+}
+
+export interface BatchProcessingSummary {
+  action: BatchActionType;
+  totalItems: number;
+  completedItems: number;
+  failedItems: number;
+  totalTokens: number;
+  totalDurationMs: number;
+  totalStoriesScored: number;
+  averageRiceScore: number;
+  completedAt: string;
+}
+
 export const ARTIFACT_19_CATALOG: ArtifactMetaDescriptor[] = [
   {
     type: 'PRD',
@@ -550,6 +585,97 @@ export interface SprintStory {
   riceScore?: number;
 }
 
+export type SkillDomain = 'frontend' | 'backend' | 'uiux' | 'risk_data' | 'devops_sre' | 'qa_automation';
+export type SkillProficiency = 0 | 1 | 2 | 3; // 0 = None, 1 = Novice, 2 = Competent, 3 = Expert / Lead
+
+export interface SkillDomainDescriptor {
+  key: SkillDomain;
+  name: string;
+  shortLabel: string;
+  color: string;
+  textColor: string;
+  bgColor: string;
+  borderColor: string;
+  description: string;
+}
+
+export interface SkillGapAnalysisResult {
+  domain: SkillDomain;
+  domainName: string;
+  totalSquadPointsAvailable: number;
+  totalMilestonePointsDemanded: number;
+  netDeltaPoints: number; // positive = surplus, negative = deficit
+  coverageRatioPercent: number;
+  status: 'OPTIMAL' | 'MODERATE_SURPLUS' | 'BOTTLENECK_DEFICIT' | 'CRITICAL_DEFICIT';
+  qualifiedMemberCount: number;
+  expertCount: number;
+  isSinglePointOfFailure: boolean;
+  assignedMembers: string[];
+  recommendation: string;
+}
+
+export interface TeamMemberAvailability {
+  id: string;
+  name: string;
+  role: string;
+  avatarBg: string;
+  email?: string;
+  totalWorkingDays: number; // e.g. 10 days in standard 2-week sprint
+  ptoDays: number; // vacation / leave days taken
+  dailyFocusHours: number; // productive sprint hours per day (e.g. 6 of 8)
+  focusFactor: number; // 0.5 to 1.0 (e.g. 0.8 for 80% sprint focus)
+  ptsPerDay: number; // estimated story points delivered per productive day
+  assignedMilestoneIds: string[];
+  skills: string[];
+  skillProficiencies?: Partial<Record<SkillDomain, SkillProficiency>>;
+  primarySkill?: SkillDomain;
+}
+
+export interface RoadmapMilestoneTarget {
+  id: string;
+  title: string;
+  quarter: string;
+  targetSprintDay: number; // Day 1 to 10
+  requiredPoints: number;
+  assignedMemberIds: string[];
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'BLOCKED';
+  confidenceScore: number;
+  description?: string;
+  theme?: string;
+  skillDemands?: Array<{
+    domain: SkillDomain;
+    points: number;
+    minProficiency?: SkillProficiency;
+  }>;
+}
+
+export interface BurnDownDayPoint {
+  day: number;
+  dayLabel: string;
+  dateStr?: string;
+  idealRemaining: number;
+  projectedRemaining: number;
+  actualRemaining?: number;
+  historicalRemaining?: number;
+  milestonePointsRemaining?: number;
+  completedPointsToday?: number;
+}
+
+export interface HistoricalSprintRecord {
+  id: string;
+  name: string;
+  cycle: string;
+  headcount: number;
+  pointsCommitted: number;
+  pointsDelivered: number;
+  completionRate: number; // percentage (e.g. 94)
+  focusFactor: number; // percentage (e.g. 80)
+  spilloverPoints: number;
+  unplannedPointsAdded: number;
+  ptsPerDevDay: number;
+  theme: string;
+}
+
 export interface CompleteWorkspacePayload {
   name: string;
   vision?: string;
@@ -838,6 +964,53 @@ export interface SandboxPreFlightCheck {
   details: string;
 }
 
+export interface CanaryMetricComparison {
+  version: string;
+  trafficPercentage: number;
+  rps: number;
+  p95LatencyMs: number;
+  p99LatencyMs: number;
+  errorRate: number; // percentage, e.g. 0.08
+  cpuUsagePercent: number;
+  memoryUsageMb: number;
+  statusCodes: {
+    status2xx: number;
+    status4xx: number;
+    status5xx: number;
+  };
+}
+
+export interface CanaryRequestLog {
+  id: string;
+  timestamp: string;
+  version: 'stable' | 'canary';
+  endpoint: string;
+  method: string;
+  statusCode: number;
+  latencyMs: number;
+  status: 'success' | 'warn' | 'error';
+  clientIp: string;
+  persona?: string;
+}
+
+export interface CanaryDeploymentConfig {
+  id: string;
+  name: string;
+  stableVersion: string;
+  canaryVersion: string;
+  trafficPercentage: number; // 0 to 100 (% routed to canary)
+  status: 'inactive' | 'running' | 'paused' | 'promoted' | 'rolled_back';
+  startedAt: string;
+  targetService: string;
+  description: string;
+  autoRollbackOnErrorThreshold: number; // e.g. 2.0%
+  autoRollbackOnLatencyThresholdMs: number; // e.g. 500ms
+  simulatedFault: 'none' | 'memory_leak' | 'latency_spike' | 'null_pointer_500' | 'rate_limit';
+  stableMetrics: CanaryMetricComparison;
+  canaryMetrics: CanaryMetricComparison;
+  recentRequests: CanaryRequestLog[];
+}
+
 export interface SandboxStatus {
   mode: EnvironmentMode;
   virtualUsersCount: number;
@@ -853,6 +1026,7 @@ export interface SandboxStatus {
   preFlightChecks: SandboxPreFlightCheck[];
   lastPromotedAt?: string;
   lastSnapshotAt?: string;
+  canaryDeployment?: CanaryDeploymentConfig;
 }
 
 export interface ServiceHealthItem {
@@ -1103,5 +1277,112 @@ export interface Endpoint5xxAlertEvent {
   totalRequestsInWindow: number;
   severity: 'warning' | 'critical' | 'recovered';
   details: string;
+}
+
+// ==========================================
+// MULTI-STEP PIPELINE & COLLABORATION TYPES
+// ==========================================
+
+export type PipelineStageId = 
+  | 'idea_analysis'
+  | 'market_framing'
+  | 'personas'
+  | 'user_journeys'
+  | 'prioritized_features'
+  | 'roadmap'
+  | 'prd'
+  | 'risks_and_metrics';
+
+export type PipelineStageStatus = 'idle' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+
+export interface ClarifyingQuestion {
+  id: string;
+  question: string;
+  reason: string;
+  options: string[];
+  selectedOption?: string;
+  customAnswer?: string;
+}
+
+export interface ConfidenceAssumptions {
+  confidenceScore: number; // 0 - 100
+  userProvided: string[];
+  aiInferred: string[];
+  keyAssumptions: Array<{ assumption: string; confidence: 'HIGH' | 'MEDIUM' | 'LOW'; impact: string }>;
+  criticalGaps: string[];
+}
+
+export interface PipelineStageResult {
+  stageId: PipelineStageId;
+  status: PipelineStageStatus;
+  output?: any;
+  renderedMarkdown?: string;
+  latencyMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  model?: string;
+  error?: string;
+  completedAt?: string;
+}
+
+export interface MultiStepPipelineJob {
+  id: string;
+  productId: string;
+  productName: string;
+  userIdea: string;
+  ideaHash: string;
+  clarifyingAnswers?: Record<string, string>;
+  status: 'idle' | 'clarifying' | 'running' | 'completed' | 'failed' | 'cancelled';
+  currentStageIndex: number;
+  stages: Record<PipelineStageId, PipelineStageResult>;
+  confidenceAssumptions?: ConfidenceAssumptions;
+  clarifyingQuestions?: ClarifyingQuestion[];
+  totalTokens: number;
+  totalCostUsd: number;
+  createdAt: string;
+  updatedAt: string;
+  isCached?: boolean;
+}
+
+export interface PrdSectionFeedback {
+  id: string;
+  jobId?: string;
+  artifactId?: string;
+  sectionKey: string;
+  sectionTitle: string;
+  rating: 'thumbs_up' | 'thumbs_down';
+  comment?: string;
+  userId?: string;
+  createdAt: string;
+}
+
+export interface SharedProjectLink {
+  token: string;
+  productId: string;
+  productName: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string; // ISO string
+  isRevoked: boolean;
+  accessCount: number;
+  permissions: 'read_only';
+  note?: string;
+}
+
+export type RoadmapViewMode = 'NOW_NEXT_LATER' | 'QUARTERLY_TIMELINE' | 'DEPENDENCY_GRAPH';
+
+export interface AnalyticsEvent {
+  id: string;
+  type: 
+    | 'generation_started' 
+    | 'step_completed' 
+    | 'generation_completed' 
+    | 'export_used' 
+    | 'section_regenerated' 
+    | 'share_created'
+    | 'feedback_submitted';
+  metadata: Record<string, any>;
+  timestamp: string;
 }
 

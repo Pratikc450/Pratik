@@ -4,11 +4,14 @@ import {
   GeneratedArtifact,
   ProductBrief,
   ARTIFACT_19_CATALOG,
-  ArtifactCategory
+  ArtifactCategory,
+  BatchQueueItem,
+  BatchActionType
 } from '../types.js';
 import { PipelineStepper, PipelineStep } from './PipelineStepper.js';
 import { DocumentViewer } from './DocumentViewer.js';
 import { TokenCostEstimator } from './TokenCostEstimator.js';
+import { BatchProcessingQueue } from './BatchProcessingQueue.js';
 import {
   Sparkles,
   Layers,
@@ -43,8 +46,15 @@ import {
   ExternalLink,
   ShieldCheck,
   Clock,
-  Send
+  Send,
+  History,
+  RotateCcw,
+  X,
+  Plus,
+  Maximize2
 } from 'lucide-react';
+import { ArtifactVersionHistoryModal } from './ArtifactVersionHistoryModal.js';
+import { ArtifactVersionHistoryViewer } from './ArtifactVersionHistoryViewer.js';
 
 interface GenerationWorkbenchProps {
   selectedProductId: string;
@@ -119,8 +129,12 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
   onApproveArtifact,
   isApproving,
 }) => {
-  // Mode toggle: 19-Artifact Autonomous Suite vs. Single-Artifact Lab
-  const [workbenchMode, setWorkbenchMode] = useState<'suite' | 'single'>('suite');
+  // Mode toggle: 19-Artifact Autonomous Suite vs. Single-Artifact Lab vs. Batch Processing Queue
+  const [workbenchMode, setWorkbenchMode] = useState<'suite' | 'single' | 'batch'>('suite');
+
+  // Multi-selection in Catalog & Batch Processing Queue states
+  const [selectedCatalogCards, setSelectedCatalogCards] = useState<Set<ArtifactType>>(new Set());
+  const [batchQueue, setBatchQueue] = useState<BatchQueueItem[]>([]);
 
   // Product Brief state (initialized with first rich preset)
   const [brief, setBrief] = useState<ProductBrief>(PRESETS[0].brief);
@@ -161,22 +175,68 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
   const [showLogs, setShowLogs] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Version History & Spec Viewer states
+  const [workbenchViewerTab, setWorkbenchViewerTab] = useState<'spec' | 'history'>('spec');
+  const [isVersionHistoryOpen, setIsVersionHistoryOpen] = useState(false);
+  const [historyTargetArtifact, setHistoryTargetArtifact] = useState<GeneratedArtifact | null>(null);
+  const [isRevertingArtifact, setIsRevertingArtifact] = useState(false);
+  const [workbenchNotification, setWorkbenchNotification] = useState<string | null>(null);
+
   // Fetch product artifacts
   const loadArtifacts = async () => {
     if (!selectedProductId) return;
     try {
       const res = await fetch(`/api/products/${selectedProductId}`);
       if (res.ok) {
-        const data = await res.json();
-        setArtifacts(data.artifacts || []);
-        if (data.artifacts && data.artifacts.length > 0 && !activeArtifact) {
-          // Default to latest PRD or first artifact
-          const prd = data.artifacts.find((a: GeneratedArtifact) => a.taskType === 'PRD');
-          setActiveArtifact(prd || data.artifacts[0]);
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          setArtifacts(data.artifacts || []);
+          if (data.artifacts && data.artifacts.length > 0 && !activeArtifact) {
+            // Default to latest PRD or first artifact
+            const prd = data.artifacts.find((a: GeneratedArtifact) => a.taskType === 'PRD');
+            setActiveArtifact(prd || data.artifacts[0]);
+          }
         }
       }
     } catch (err) {
       console.error('Failed to load artifacts', err);
+    }
+  };
+
+  // Handle reverting artifact to previous version iteration
+  const handleRevertArtifact = async (artifactId: string, targetVersion: number) => {
+    setIsRevertingArtifact(true);
+    try {
+      const res = await fetch(`/api/artifacts/${artifactId}/revert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetVersion,
+          userId: 'senior_pm',
+          reason: `Rollback to iteration v${targetVersion} via GenerationWorkbench version history viewer`
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.artifact) {
+          // Update local artifacts list
+          setArtifacts((prev) => prev.map((a) => (a.id === artifactId ? data.artifact : a)));
+          if (activeArtifact?.id === artifactId) {
+            setActiveArtifact(data.artifact);
+          }
+          if (historyTargetArtifact?.id === artifactId) {
+            setHistoryTargetArtifact(data.artifact);
+          }
+          setWorkbenchNotification(`✨ Successfully restored ${data.artifact.taskType.replace(/_/g, ' ')} to Version v${targetVersion} (now v${data.newVersion})!`);
+          setTimeout(() => setWorkbenchNotification(null), 5000);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to revert artifact', err);
+    } finally {
+      setIsRevertingArtifact(false);
     }
   };
 
@@ -203,6 +263,65 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
 
   const handleDeselectAll = () => {
     setSelectedTypes([]);
+  };
+
+  // Batch Multi-Select Handlers
+  const handleToggleCardSelection = (type: ArtifactType) => {
+    setSelectedCatalogCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
+
+  const handleSelectAllCatalog = () => {
+    setSelectedCatalogCards(new Set(ARTIFACT_19_CATALOG.map((a) => a.type)));
+  };
+
+  const handleClearCatalogSelection = () => {
+    setSelectedCatalogCards(new Set());
+  };
+
+  const handleSelectUngenerated = () => {
+    const generatedTypes = new Set(artifacts.map((a) => a.taskType));
+    const ungen = ARTIFACT_19_CATALOG.filter((a) => !generatedTypes.has(a.type)).map((a) => a.type);
+    setSelectedCatalogCards(new Set(ungen));
+  };
+
+  const handleSelectRiceTargets = () => {
+    const targets: ArtifactType[] = ['FEATURE_PRIORITIZATION', 'USER_STORIES', 'EPICS', 'FEATURES', 'ROADMAP', 'PRD'];
+    setSelectedCatalogCards(new Set(targets));
+  };
+
+  const handleEnqueueSelected = (action: BatchActionType, switchToQueue: boolean = true) => {
+    if (selectedCatalogCards.size === 0) return;
+    const newItems: BatchQueueItem[] = [];
+
+    selectedCatalogCards.forEach((taskType) => {
+      const meta = ARTIFACT_19_CATALOG.find((a) => a.type === taskType);
+      const existingArt = artifacts.find((a) => a.taskType === taskType);
+      if (meta) {
+        newItems.push({
+          id: `queue_${Date.now()}_${taskType}_${Math.random().toString(36).substring(2, 6)}`,
+          type: taskType,
+          label: meta.label,
+          category: meta.category,
+          action,
+          status: 'queued',
+          progressPercent: 0,
+          resultArtifactId: existingArt?.id
+        });
+      }
+    });
+
+    setBatchQueue((prev) => [...prev, ...newItems]);
+    setWorkbenchNotification(`✨ Added ${newItems.length} artifacts to Batch Queue (${action === 'auto_rice_score' ? 'Automated RICE Scoring' : 'Bulk Generation'})!`);
+    setTimeout(() => setWorkbenchNotification(null), 4000);
+
+    if (switchToQueue) {
+      setWorkbenchMode('batch');
+    }
   };
 
   // ==========================================
@@ -543,10 +662,10 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
           </div>
 
           {/* Mode Switcher */}
-          <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800 self-start md:self-center shrink-0">
+          <div className="flex flex-wrap bg-slate-950 p-1.5 rounded-xl border border-slate-800 self-start md:self-center shrink-0 gap-1">
             <button
               onClick={() => setWorkbenchMode('suite')}
-              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all ${
+              className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
                 workbenchMode === 'suite'
                   ? 'bg-emerald-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
@@ -555,9 +674,10 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
               <Sparkles className="w-3.5 h-3.5" />
               <span>19-Artifact Autonomous Suite</span>
             </button>
+
             <button
               onClick={() => setWorkbenchMode('single')}
-              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all ${
+              className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
                 workbenchMode === 'single'
                   ? 'bg-slate-800 text-slate-100 shadow-md'
                   : 'text-slate-400 hover:text-slate-200'
@@ -565,6 +685,23 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
             >
               <Sliders className="w-3.5 h-3.5" />
               <span>Single Artifact Lab</span>
+            </button>
+
+            <button
+              onClick={() => setWorkbenchMode('batch')}
+              className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                workbenchMode === 'batch'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              <span>Batch Queue</span>
+              {batchQueue.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-amber-500 text-slate-950">
+                  {batchQueue.length}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -765,6 +902,20 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
             </button>
           </div>
         </div>
+      ) : workbenchMode === 'batch' ? (
+        <BatchProcessingQueue
+          productId={selectedProductId}
+          brief={brief}
+          artifacts={artifacts}
+          queue={batchQueue}
+          onUpdateQueue={setBatchQueue}
+          onRefreshArtifacts={loadArtifacts}
+          onSelectArtifactToView={(art) => {
+            setActiveArtifact(art);
+            setWorkbenchViewerTab('spec');
+          }}
+          onClose={() => setWorkbenchMode('suite')}
+        />
       ) : (
         /* SINGLE ARTIFACT LAB MODE */
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
@@ -975,11 +1126,81 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
           </div>
         </div>
 
+        {/* Batch Selection Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-slate-300 flex items-center space-x-1.5 mr-1">
+              <CheckSquare className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Multi-Select Batch ({selectedCatalogCards.size} selected):</span>
+            </span>
+
+            <button
+              onClick={handleSelectAllCatalog}
+              className="text-slate-400 hover:text-white font-medium hover:underline cursor-pointer"
+            >
+              Select All (19)
+            </button>
+            <span className="text-slate-600">·</span>
+            <button
+              onClick={handleSelectUngenerated}
+              className="text-slate-400 hover:text-white font-medium hover:underline cursor-pointer"
+            >
+              Select Un-generated
+            </button>
+            <span className="text-slate-600">·</span>
+            <button
+              onClick={handleSelectRiceTargets}
+              className="text-slate-400 hover:text-amber-300 font-medium hover:underline cursor-pointer"
+            >
+              Select RICE Targets
+            </button>
+            {selectedCatalogCards.size > 0 && (
+              <>
+                <span className="text-slate-600">·</span>
+                <button
+                  onClick={handleClearCatalogSelection}
+                  className="text-rose-400 hover:text-rose-300 font-medium cursor-pointer"
+                >
+                  Clear Selection
+                </button>
+              </>
+            )}
+          </div>
+
+          {selectedCatalogCards.size > 0 && (
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => handleEnqueueSelected('auto_rice_score', true)}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold flex items-center space-x-1 cursor-pointer transition-colors shadow-xs"
+              >
+                <BarChart3 className="w-3 h-3" />
+                <span>Auto RICE Score ({selectedCatalogCards.size})</span>
+              </button>
+
+              <button
+                onClick={() => handleEnqueueSelected('bulk_generate', true)}
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center space-x-1 cursor-pointer transition-colors shadow-xs"
+              >
+                <Zap className="w-3 h-3" />
+                <span>Bulk AI Generate ({selectedCatalogCards.size})</span>
+              </button>
+
+              <button
+                onClick={() => handleEnqueueSelected('auto_rice_score', false)}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold cursor-pointer"
+              >
+                + Add to Queue
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Catalog Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredCatalog.map((item) => {
             const artifact = artifacts.find((a) => a.taskType === item.type);
             const isSelected = activeArtifact?.taskType === item.type;
+            const isCardChecked = selectedCatalogCards.has(item.type);
             const isApproved = artifact?.status === 'APPROVED';
 
             return (
@@ -987,7 +1208,9 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
                 key={item.type}
                 onClick={() => artifact && setActiveArtifact(artifact)}
                 className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
-                  isSelected
+                  isCardChecked
+                    ? 'ring-2 ring-indigo-500 bg-slate-900 border-indigo-500/80 shadow-md shadow-indigo-950/30'
+                    : isSelected
                     ? 'bg-slate-900 border-emerald-500 shadow-lg shadow-emerald-950/30 ring-1 ring-emerald-500/50'
                     : artifact
                     ? 'bg-slate-900/80 border-slate-800 hover:border-slate-700 cursor-pointer'
@@ -996,9 +1219,26 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
               >
                 <div>
                   <div className="flex items-center justify-between mb-2.5">
-                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
-                      {item.category}
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleCardSelection(item.type);
+                        }}
+                        className={`w-4 h-4 rounded border flex items-center justify-center transition-colors cursor-pointer ${
+                          isCardChecked
+                            ? 'bg-indigo-600 border-indigo-500 text-white'
+                            : 'bg-slate-950 border-slate-700 hover:border-slate-500 text-transparent'
+                        }`}
+                        title={`Select ${item.label} for batch processing`}
+                      >
+                        <Check className="w-2.5 h-2.5 stroke-[3]" />
+                      </button>
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
+                        {item.category}
+                      </span>
+                    </div>
 
                     {artifact ? (
                       <span
@@ -1036,16 +1276,33 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
                       <span className="text-slate-400 font-mono text-[10px]">
                         {artifact.metadata?.outputTokens || 450} tok · {artifact.metadata?.latencyMs || 210}ms
                       </span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveArtifact(artifact);
-                        }}
-                        className="text-emerald-400 hover:text-emerald-300 font-semibold flex items-center space-x-0.5 cursor-pointer"
-                      >
-                        <span>View Spec</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </button>
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveArtifact(artifact);
+                            setHistoryTargetArtifact(artifact);
+                            setWorkbenchViewerTab('history');
+                          }}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold text-purple-300 hover:text-purple-100 bg-purple-950/70 hover:bg-purple-900 border border-purple-800/80 flex items-center space-x-1 cursor-pointer transition-colors shadow-xs"
+                          title="View previous iterations & approval history"
+                        >
+                          <History className="w-2.5 h-2.5 text-purple-400" />
+                          <span>v{artifact.version} ({artifact.versionHistory?.length || 1})</span>
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveArtifact(artifact);
+                            setWorkbenchViewerTab('spec');
+                          }}
+                          className="text-emerald-400 hover:text-emerald-300 font-semibold flex items-center space-x-0.5 cursor-pointer"
+                        >
+                          <span>View Spec</span>
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
                     </>
                   ) : (
                     <button
@@ -1070,26 +1327,118 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
       {/* 7. ACTIVE ARTIFACT DOCUMENT VIEWER */}
       {activeArtifact ? (
         <div className="space-y-3 pt-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center space-x-2 flex-wrap">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
                 ACTIVE SPECIFICATION VIEWER:
               </span>
               <span className="text-xs font-extrabold text-emerald-400">
                 {activeArtifact.schemaData?.title || activeArtifact.taskType.replace('_', ' ')}
               </span>
+              <span className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded-full border flex items-center space-x-1 ${
+                activeArtifact.status === 'APPROVED'
+                  ? 'bg-emerald-950 text-emerald-300 border-emerald-700/80 shadow-xs'
+                  : 'bg-amber-950/80 text-amber-300 border-amber-700/80'
+              }`}>
+                {activeArtifact.status === 'APPROVED' ? <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" /> : <Clock className="w-2.5 h-2.5 text-amber-400" />}
+                <span>v{activeArtifact.version}.0 · {activeArtifact.status}</span>
+              </span>
             </div>
-            <span className="text-xs font-mono text-slate-400">
-              Artifact ID: {activeArtifact.id}
-            </span>
+
+            <div className="flex items-center space-x-2.5 flex-wrap">
+              <span className="text-xs font-mono text-slate-400 hidden sm:inline">
+                Artifact ID: {activeArtifact.id}
+              </span>
+
+              {/* View Mode Tabs: Document Spec vs Version History Viewer */}
+              <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button
+                  onClick={() => setWorkbenchViewerTab('spec')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer ${
+                    workbenchViewerTab === 'spec'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Inspect document prose and schema"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Document Spec</span>
+                </button>
+
+                <button
+                  onClick={() => setWorkbenchViewerTab('history')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer ${
+                    workbenchViewerTab === 'history'
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'text-purple-300 hover:text-purple-100 hover:bg-purple-950/40'
+                  }`}
+                  title="View previous iterations and approval history"
+                >
+                  <History className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Version History ({activeArtifact.versionHistory?.length || 1} Iterations)</span>
+                </button>
+              </div>
+
+              {/* Expand to Modal Button */}
+              <button
+                onClick={() => {
+                  setHistoryTargetArtifact(activeArtifact);
+                  setIsVersionHistoryOpen(true);
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-slate-100 text-xs font-semibold border border-slate-800 flex items-center space-x-1.5 transition-colors cursor-pointer"
+                title="Expand Version History to Full Modal"
+              >
+                <Maximize2 className="w-3.5 h-3.5 text-purple-400" />
+                <span className="hidden sm:inline">Expand Modal</span>
+              </button>
+            </div>
           </div>
 
-          <DocumentViewer
-            artifact={activeArtifact}
-            onApprove={onApproveArtifact}
-            isApproving={isApproving}
-            onRefreshArtifact={(updated) => setActiveArtifact(updated)}
-          />
+          {workbenchNotification && (
+            <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs font-semibold flex items-center justify-between animate-in fade-in shadow-md">
+              <div className="flex items-center space-x-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{workbenchNotification}</span>
+              </div>
+              <button onClick={() => setWorkbenchNotification(null)} className="text-emerald-400 hover:text-emerald-200 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Conditional Rendering between Document Spec and Version History Viewer */}
+          {workbenchViewerTab === 'history' ? (
+            <ArtifactVersionHistoryViewer
+              artifact={activeArtifact}
+              productName={brief.productName}
+              onRevertArtifact={handleRevertArtifact}
+              onApproveArtifact={onApproveArtifact}
+              isReverting={isRevertingArtifact}
+              isApproving={isApproving}
+              embedded={true}
+              onClose={() => setWorkbenchViewerTab('spec')}
+              onSelectIterationForSpecView={(iteration) => {
+                setActiveArtifact({
+                  ...activeArtifact,
+                  version: iteration.version,
+                  status: iteration.status,
+                  schemaData: iteration.schemaData,
+                  renderedMarkdown: iteration.renderedMarkdown
+                });
+                setWorkbenchViewerTab('spec');
+              }}
+            />
+          ) : (
+            <DocumentViewer
+              artifact={activeArtifact}
+              onApprove={onApproveArtifact}
+              isApproving={isApproving}
+              onRefreshArtifact={(updated) => setActiveArtifact(updated)}
+              onOpenVersionHistory={() => {
+                setWorkbenchViewerTab('history');
+              }}
+            />
+          )}
         </div>
       ) : (
         <div className="p-8 border border-dashed border-slate-800 rounded-2xl text-center space-y-3">
@@ -1098,6 +1447,78 @@ export const GenerationWorkbench: React.FC<GenerationWorkbenchProps> = ({
           <p className="text-xs text-slate-400 max-w-md mx-auto">
             Click &quot;Generate 19 Artifacts in Seconds&quot; above or select any generated artifact card to inspect its verified Markdown prose and raw schema data.
           </p>
+        </div>
+      )}
+
+      {/* 8. ARTIFACT VERSION HISTORY & APPROVAL GATE MODAL */}
+      <ArtifactVersionHistoryModal
+        isOpen={isVersionHistoryOpen}
+        onClose={() => setIsVersionHistoryOpen(false)}
+        artifact={historyTargetArtifact || activeArtifact}
+        productName={brief.productName}
+        onRevertArtifact={handleRevertArtifact}
+        onApproveArtifact={onApproveArtifact}
+        isReverting={isRevertingArtifact}
+        isApproving={isApproving}
+        onSelectIterationForSpecView={(iteration) => {
+          const target = historyTargetArtifact || activeArtifact;
+          if (target) {
+            setActiveArtifact({
+              ...target,
+              version: iteration.version,
+              status: iteration.status,
+              schemaData: iteration.schemaData,
+              renderedMarkdown: iteration.renderedMarkdown
+            });
+          }
+          setIsVersionHistoryOpen(false);
+          setWorkbenchViewerTab('spec');
+        }}
+      />
+
+      {/* 9. FLOATING BATCH ACTION BAR (Triggered on catalog multi-select) */}
+      {selectedCatalogCards.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 border border-indigo-500/80 rounded-2xl p-3 shadow-2xl backdrop-blur-md flex flex-wrap items-center gap-3 animate-in fade-in slide-in-from-bottom-4 ring-1 ring-indigo-500/30">
+          <div className="flex items-center space-x-2 px-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" />
+            <span className="text-xs font-bold text-slate-100 font-mono">
+              {selectedCatalogCards.size} Artifacts Selected
+            </span>
+          </div>
+
+          <div className="h-4 w-px bg-slate-700 hidden sm:block" />
+
+          <button
+            onClick={() => handleEnqueueSelected('auto_rice_score', true)}
+            className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md cursor-pointer"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span>Auto RICE Score ({selectedCatalogCards.size})</span>
+          </button>
+
+          <button
+            onClick={() => handleEnqueueSelected('bulk_generate', true)}
+            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md cursor-pointer"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>Bulk AI Generate ({selectedCatalogCards.size})</span>
+          </button>
+
+          <button
+            onClick={() => handleEnqueueSelected('auto_rice_score', false)}
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center space-x-1 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Add to Queue</span>
+          </button>
+
+          <button
+            onClick={handleClearCatalogSelection}
+            className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+            title="Clear selection"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
     </div>
